@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Silphe Privacy &mdash; your movement data never leaves your computer</title>
+  <meta name="description" content="Silphe is local-first. Your pointer-movement recordings are written to your own machine and stay there — no cloud, no telemetry, no account, no network calls.">
+  <meta property="og:title" content="Silphe Privacy">
+  <meta property="og:description" content="Your movement data never leaves your computer.">
+  <meta property="og:url" content="https://thrivetech.ai/silphe/privacy.html">
+  <meta property="og:type" content="website">
+  <style>
+    :root {
+      --bg: #0d1117; --surface: #161b22; --border: #30363d;
+      --text: #e6edf3; --muted: #8b949e; --green: #39d353;
+      --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      line-height: 1.6; -webkit-font-smoothing: antialiased; }
+    a { color: var(--green); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    main { max-width: 680px; margin: 0 auto; padding: 56px 24px 96px; }
+    .back { font-family: var(--mono); font-size: 14px; color: var(--muted); }
+    h1 { font-size: 40px; letter-spacing: -1px; margin: 14px 0 6px; }
+    .lede { font-size: 20px; color: var(--green); margin: 0 0 32px; font-weight: 600; }
+    h2 { font-size: 21px; margin: 36px 0 8px; }
+    p, li { color: #c9d1d9; }
+    strong { color: var(--text); }
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 4px 22px; }
+    code { font-family: var(--mono); background: var(--surface); border: 1px solid var(--border);
+           border-radius: 5px; padding: 1px 6px; font-size: 14px; }
+    footer { margin-top: 64px; padding-top: 22px; border-top: 1px solid var(--border); color: var(--muted); font-size: 14px; }
+  </style>
+</head>
+<body>
+<main>
+  <div class="back"><a href="index.html">&larr; Silphe</a></div>
+  <h1>Privacy</h1>
+  <p class="lede">Your movement data never leaves your computer.</p>
+
+  <h2>What Silphe records</h2>
+  <p>When you play, Silphe records the path of your pointer &mdash; positions and timestamps &mdash; and a few per-task numbers (reaction time, accuracy, tremor, tracking). That's all.</p>
+
+  <h2>Where it goes</h2>
+  <div class="card">
+    <p>Nowhere. It is written to a recordings folder on your own machine and stays there. There is:</p>
+    <ul>
+      <li><strong>No cloud upload.</strong></li>
+      <li><strong>No telemetry, no analytics, no "anonymized" exhaust.</strong></li>
+      <li><strong>No account, no login, no network calls at all</strong> for the core capture, analysis, and arc view.</li>
+    </ul>
+  </div>
+
+  <h2>Why this matters</h2>
+  <p>The exact wobble of your hand is about as personal as data gets &mdash; it can reveal fatigue, intoxication, and motor or cognitive change. That is precisely why Silphe is built local-first. Your signature is yours.</p>
+
+  <h2>Your data, your control</h2>
+  <p>The recordings are plain text (<code>JSONL</code>) on your disk. Read them, move them, or delete them whenever you like &mdash; they're just files.</p>
+
+  <h2>Contact</h2>
+  <p><a href="mailto:privacy@thrivetech.ai">privacy@thrivetech.ai</a></p>
+
+  <footer>Silphe &middot; a <a href="https://thrivetech.ai">Thrive Tech</a> project.</footer>
+</main>
+</body>
+</html>
