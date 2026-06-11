@@ -1,20 +1,52 @@
 [project]
 name = "silphe"
 version = "0.1.0"
-description = ""
+description = "Generate and quantify human-fidelity pointer movement — your mouse's signature, captured locally."
 authors = [
-    {name = "Marty McEnroe",email = "cto@thrivetech.ai"}
+    {name = "Marty McEnroe", email = "cto@thrivetech.ai"}
 ]
-license = {text = "PolyForm-Noncommercial-1.0.0"}
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 readme = "README.md"
 requires-python = ">=3.10,<4.0"
-dependencies = [
+keywords = [
+    "human cursor", "mouse movement", "pointer", "fitts law", "visuomotor",
+    "biometrics", "tremor", "bot detection", "automation", "human-like",
 ]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Human Machine Interfaces",
+    "Topic :: Software Development :: Testing",
+    "Typing :: Typed",
+]
+dependencies = []
 
+[project.urls]
+Homepage = "https://thrivetech.ai/silphe"
+Repository = "https://github.com/martymcenroe/silphe"
+Issues = "https://github.com/martymcenroe/silphe/issues"
+
+[project.scripts]
+silphe-play = "silphe.calibrate:main"
+silphe-arc = "silphe.arc:main"
+silphe-analyze = "silphe.analyze:main"
+silphe-lag = "silphe.analyze_lag:main"
+silphe-demo = "silphe.range_demo:main"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
+
+[tool.poetry]
+packages = [{include = "silphe", from = "src"}]
 
 [dependency-groups]
 dev = [
@@ -23,6 +55,7 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
+pythonpath = ["src"]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]

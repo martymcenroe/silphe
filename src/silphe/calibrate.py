@@ -11,11 +11,11 @@ GitHub-contribution-graph field of squares:
   EVASIVE  — "Andvari": the roach runs the dark grid (green = walls), ducks
              under silver hide-cells (they pulse red), thump it there; several hits
 
-Everything stays on your machine (talos-mouse-host/recordings/*.jsonl). Each
+Everything stays on your machine (see silphe.analysis.recordings_dir). Each
 record is stamped with device + OS. ESC quits; progress is saved as you go.
 
-    poetry run python talos-mouse-host/calibrate.py            # mouse (default)
-    poetry run python talos-mouse-host/calibrate.py trackpad   # tag the session as trackpad
+    silphe-play            # mouse (default), after `pip install silphe`
+    silphe-play trackpad   # tag the session as trackpad
 """
 
 from __future__ import annotations
@@ -29,7 +29,9 @@ import sys
 import time
 import tkinter as tk
 
-REC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "recordings")
+from silphe.analysis import recordings_dir
+
+REC_DIR = recordings_dir()
 VERSION = "Andvari"
 HOLD_SECS = 1.2
 TRACK_SECS = 4.0
@@ -504,7 +506,11 @@ class Garden:
         self.state = "done"
 
 
-if __name__ == "__main__":
+def main() -> None:
     root = tk.Tk()
     Garden(root)
     root.mainloop()
+
+
+if __name__ == "__main__":
+    main()

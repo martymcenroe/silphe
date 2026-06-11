@@ -5,9 +5,10 @@ A local tkinter window with a bullseye. You trigger the cursor; it stalks the
 target like a human (or like a robot, for contrast) and lands a real OS click on
 the canvas. The path it actually took is drawn so you can SEE the difference.
 
-Nothing here touches LinkedIn or any website — it's a window on your own machine.
+Nothing here touches any website — it's a window on your own machine.
 
-    poetry run python talos-mouse-host/range_demo.py
+    silphe-demo                   # after `pip install silphe`
+    python -m silphe.range_demo   # from a source checkout
 
 Controls:
     SPACE  — human cursor fires at the target
@@ -25,7 +26,7 @@ import random
 import time
 import tkinter as tk
 
-import human_cursor as hc
+from silphe import cursor as hc
 
 HUMAN_COLOR = "#39d353"   # GitHub-garden green, naturally
 ROBOT_COLOR = "#f85149"   # sterile red
@@ -43,7 +44,7 @@ class Range:
                                 bg="#0d1117", highlightthickness=0)
         self.canvas.pack(fill="both", expand=True)
 
-        self.human = hc.HumanCursor()              # swap to hc.TREMOR_PROFILE to feel the palsy
+        self.human = hc.HumanCursor()              # swap to hc.TREMOR_PROFILE for a heavier tremor
         self.robot = hc.RobotCursor()
         self.tx = self.ty = 0
         self.busy = False
@@ -118,7 +119,11 @@ class Range:
             text="HIT" if hit else f"{d:.0f}px off")
 
 
-if __name__ == "__main__":
+def main() -> None:
     root = tk.Tk()
     Range(root)
     root.mainloop()
+
+
+if __name__ == "__main__":
+    main()
