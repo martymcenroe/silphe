@@ -1,7 +1,7 @@
 """
 arc.py — the longitudinal "arc" view: your movement signature over time.
 
-Reads every session in recordings/ and plots your cognitive fingerprint drifting
+Reads every session in recordings/ and plots your movement signature drifting
 over time: reaction, accuracy, speed, tracking, tremor — one point per session,
 with a trend (improving / declining) once there's more than one. Plus a
 "tonight, round by round" strip so there's a real line on night one.

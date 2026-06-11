@@ -60,6 +60,9 @@ coverage.xml
 # Unleashed session transcripts (auto-generated, untracked)
 data/unleashed/
 
+# Unleashed wrapper config — local/machine-specific, never in a public repo
+.unleashed.json
+
 # Silphe recordings — local biometric movement data, never published
 recordings/
 **/recordings/
