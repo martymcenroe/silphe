@@ -1,81 +1,50 @@
 # Publishing Silphe to PyPI (and actually reserving the name)
 
-Silphe publishes via **OIDC Trusted Publishing**: GitHub Actions mints a
-short-lived token and PyPI trusts it. **No API token is stored anywhere.**
-
-This is the silphe-specific version of AssemblyZero runbook
-`0934-pypi-trusted-publisher-setup.md`, with two corrections that runbook still
-needs (tracked in AssemblyZero #1582 and #1583).
+The **first** release is uploaded manually with `twine` — that's what reserves
+the name. **Automated OIDC tag-push publishing comes later**, once the release
+workflow lands (currently blocked on a PAT scope issue, tracked in #6).
 
 ## The one thing everyone gets wrong
 
-> **Registering a "pending publisher" does NOT reserve the name.**
+> **Nothing reserves a PyPI name except publishing an actual release.**
 
-PyPI's own docs:
+Registering a Trusted-Publisher "pending publisher" reserves *nothing* — PyPI's
+own docs say so:
 
 > "A 'pending' publisher does not create a project or reserve a project's name
-> until it is actually used to publish. If you create a 'pending' publisher but
-> another user registers the project name before you actually publish to it,
-> your 'pending' publisher will be invalidated."
+> until it is actually used to publish."
 >
 > — <https://docs.pypi.org/trusted-publishers/creating-a-project-through-oidc/>
 
-**The only action that reserves `silphe` is publishing a real release.** Until
-the first `v*.*.*` tag publishes successfully, the name is free for anyone to
-take — and if they take it, your pending publisher silently invalidates.
+So `silphe` is unclaimed until the upload below succeeds.
 
-## Credentials — what you actually need
+## Credentials — what you need
 
 - **PyPI has no "Sign in with GitHub."** Account login is username/email +
-  password + **2FA** (authenticator app or passkey) + recovery codes. It's in
-  your password manager from a prior project's setup — reuse that account.
-- The GitHub connection in Step 1 is only the OIDC *publish* trust, never login.
-- **You need zero API token** for this path. Nothing to generate or store.
+  password + **2FA** (authenticator app or passkey) + recovery codes — in your
+  password manager from a prior project. Reuse that account; don't make a second.
+- For this manual first upload you need a **PyPI API token**: create one at
+  <https://pypi.org/manage/account/token/> ("Entire account" scope works for the
+  first upload, since the project doesn't exist yet). It looks like `pypi-…`.
+- **Secret hygiene:** paste the token at twine's password prompt — do **not** put
+  it in the command, an env var, or anywhere shell history captures it. Delete or
+  re-scope the token after the first upload.
 
-## Pre-flight (done by the library PR)
-
-- [x] `pyproject.toml` → `[project] name = "silphe"`, `version = "0.1.0"`
-- [x] `.github/workflows/release.yml` present, `environment: pypi`, tag `v*.*.*`
-- [x] `poetry build` produces a wheel + sdist
-- [x] Library PR merged to `main`
-
-## Step 1 — Register the pending publisher (browser, ~2 min)
-
-1. Log in at <https://pypi.org/manage/account/publishing/> (your existing account).
-2. Under **"Add a new pending publisher,"** fill in exactly:
-
-   | Field | Value |
-   |---|---|
-   | PyPI Project Name | `silphe` |
-   | Owner | `martymcenroe` |
-   | Repository name | `silphe` |
-   | Workflow filename | `release.yml` |
-   | Environment name | `pypi` |
-
-3. Click **Add**. This configures trust. It does **not** yet reserve the name —
-   Step 2 does.
-
-## Step 2 — Publish (the tag push that reserves the name)
-
-From `main`, with the tag matching `pyproject.toml`'s version:
+## Reserve the name — first release (you run this)
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+cd /c/Users/mcwiz/Projects/silphe
+poetry build                          # fresh wheel + sdist in dist/
+python -m pip install --upgrade twine
+twine upload dist/*
+# username: __token__
+# password: <paste the pypi-… token at the prompt>
 ```
 
-Watch it:
+On success the release is live at <https://pypi.org/project/silphe/0.1.0/> and
+**the name is now reserved.**
 
-```bash
-gh run watch --repo martymcenroe/silphe
-```
-
-The workflow builds the distributions and publishes via OIDC. On success the
-release is live at <https://pypi.org/project/silphe/0.1.0/> within seconds, the
-name is **now reserved**, and the pending publisher promotes to a permanent
-trusted publisher.
-
-## Step 3 — Verify
+## Verify
 
 ```bash
 pip install silphe
@@ -83,26 +52,33 @@ python -c "import silphe; print(silphe.__version__)"   # 0.1.0
 silphe-analyze                                          # entry point resolves
 ```
 
-## Subsequent releases
+Then: clear your clipboard, and delete or project-scope the API token.
 
-Bump the version, tag, push the tag. No browser steps ever again.
+## Future releases — switch to OIDC (no token, ever)
 
-```bash
-poetry version patch
-git commit -am "chore: bump to $(poetry version -s)"
-git tag "v$(poetry version -s)"
-git push origin main "v$(poetry version -s)"
-```
+Once the release workflow lands (#6):
+
+1. On the now-existing PyPI project → **Manage → Publishing → Add a trusted
+   publisher**: owner `martymcenroe`, repo `silphe`, workflow `release.yml`,
+   environment `pypi`.
+2. From then on every release is just a tag push — no token, no browser:
+
+   ```bash
+   poetry version patch
+   git commit -am "chore: bump to $(poetry version -s)"
+   git tag "v$(poetry version -s)"
+   git push origin main "v$(poetry version -s)"
+   ```
 
 ## If it fails
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `Trusted publisher not found` | Step 1 not done, or a field mismatched | Re-check owner / repo / `release.yml` / `pypi` match exactly |
-| `Project name is not available` | Someone else already took `silphe` | The name is gone; choose another in `pyproject.toml` and re-register |
-| Workflow never starts | Tag isn't `v*.*.*` | `v0.1.0` matches; `0.1.0` does not |
+| `403 Forbidden` on upload | Bad/expired token, or wrong username | Username must be `__token__`; regenerate the token |
+| `Project name is not available` | Someone else already took `silphe` | The name is gone; pick another in `pyproject.toml` |
+| `File already exists` | That version was already uploaded | Bump the version; PyPI never lets you re-upload a version |
 
 ## References
 
-- AssemblyZero `0934-pypi-trusted-publisher-setup.md` — the fleet runbook (corrections tracked in AZ #1582, #1583)
+- AssemblyZero `0934-pypi-trusted-publisher-setup.md` — the fleet OIDC runbook (corrections tracked in AZ #1582, #1583)
 - PyPI Trusted Publishers — <https://docs.pypi.org/trusted-publishers/>
