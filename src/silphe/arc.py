@@ -1,5 +1,5 @@
 """
-arc.py — the longitudinal "arc" view (the #177 cognitive-assessment dashboard).
+arc.py — the longitudinal "arc" view: your movement signature over time.
 
 Reads every session in recordings/ and plots your cognitive fingerprint drifting
 over time: reaction, accuracy, speed, tracking, tremor — one point per session,
@@ -8,8 +8,8 @@ with a trend (improving / declining) once there's more than one. Plus a
 
 Zero dependencies (tkinter + stdlib). Local only.
 
-    poetry run python talos-mouse-host/arc.py            # the dashboard
-    poetry run python talos-mouse-host/arc.py --text     # headless summary
+    silphe-arc            # the dashboard, after `pip install silphe`
+    silphe-arc --text     # headless summary
 """
 
 from __future__ import annotations
@@ -22,7 +22,9 @@ import statistics as st
 import sys
 import tkinter as tk
 
-REC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "recordings")
+from silphe.analysis import recordings_dir
+
+REC = recordings_dir()
 KIND_COLOR = {"acquire": "#e3b341", "track": "#a371f7", "hold": "#58a6ff", "evasive": "#d29922"}
 
 
@@ -173,7 +175,7 @@ def gui(sessions):
 def main():
     sessions = load_sessions()
     if not sessions:
-        print("No recordings yet. Play a session: python talos-mouse-host/calibrate.py")
+        print("No recordings yet. Play a session: silphe-play")
         return
     if "--text" in sys.argv:
         text_report(sessions)
