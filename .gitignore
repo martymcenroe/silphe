@@ -60,6 +60,10 @@ coverage.xml
 # Unleashed session transcripts (auto-generated, untracked)
 data/unleashed/
 
+# Silphe recordings — local biometric movement data, never published
+recordings/
+**/recordings/
+
 # Agent-parked files (mv $file $file.bak / $file.parked-{timestamp})
 # CLAUDE.md "Destroying uncommitted state" principle: the agent uses
 # mv-to-bak instead of rm to preserve recoverability. Ignored here so
