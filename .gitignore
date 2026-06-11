@@ -73,3 +73,12 @@ recordings/
 # the parked artifacts don't pollute git status across the fleet.
 *.bak
 *.parked-*
+
+# --- Agent / AssemblyZero workflow artifacts — local-only, kept out of the public product repo ---
+CLAUDE.md
+GEMINI.md
+.claude/
+**/.gitkeep
+docs/session-logs/
+docs/lessons-learned.md
+docs/handoff*
