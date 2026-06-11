@@ -1,0 +1,68 @@
+# Claude Code local settings (machine-specific)
+.claude/settings.local.json
+
+# Claude Code temporary files
+tmpclaude-*
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+.venv/
+venv/
+ENV/
+
+# Node.js
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment & Secrets
+.env
+.env.*
+.dev.vars
+*.pem
+*.key
+credentials.json
+secrets.json
+
+# Logs
+*.log
+logs/
+
+# Coverage
+.coverage
+htmlcov/
+coverage.xml
+
+# Test artifacts
+.pytest_cache/
+.tox/
+
+# Build artifacts
+*.generated.json
+
+# Unleashed session transcripts (auto-generated, untracked)
+data/unleashed/
+
+# Agent-parked files (mv $file $file.bak / $file.parked-{timestamp})
+# CLAUDE.md "Destroying uncommitted state" principle: the agent uses
+# mv-to-bak instead of rm to preserve recoverability. Ignored here so
+# the parked artifacts don't pollute git status across the fleet.
+*.bak
+*.parked-*

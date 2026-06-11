@@ -1,0 +1,11 @@
+{
+  "variables": {
+    "PROJECT_ROOT": "/c/Users/mcwiz/Projects/silphe",
+    "PROJECT_ROOT_WINDOWS": "C:\\Users\\mcwiz\\Projects\\silphe",
+    "PROJECT_NAME": "silphe",
+    "GITHUB_REPO": "martymcenroe/silphe",
+    "TOOLS_DIR": "/c/Users/mcwiz/Projects/silphe/tools",
+    "WORKTREE_PATTERN": "silphe-{ID}"
+  },
+  "inherit_from": "C:\\Users\\mcwiz\\Projects\\AssemblyZero"
+}

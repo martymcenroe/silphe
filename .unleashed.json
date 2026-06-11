@@ -1,0 +1,13 @@
+{
+  "profile": "default",
+  "claude": {
+    "model": "claude-opus-4-7[1M]",
+    "effort": "max"
+  },
+  "assemblyZero": true,
+  "onboard": {
+    "auto": true,
+    "guide": null,
+    "plan": null
+  }
+}
