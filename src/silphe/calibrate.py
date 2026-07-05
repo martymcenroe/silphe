@@ -129,6 +129,62 @@ def leaderboard_path() -> str:
                         "leaderboard.json")
 
 
+def board_qualifies(path: str, score: int) -> bool:
+    """Would *score* land on the top-LEADERBOARD_KEEP table?"""
+    if score <= 0:
+        return False
+    try:
+        with open(path, encoding="utf-8") as f:
+            board = [r for r in json.load(f) if isinstance(r, dict)]
+    except Exception:
+        return True                                        # empty/corrupt board: anything lands
+    if len(board) < LEADERBOARD_KEEP:
+        return True
+    return score > min(int(r.get("score", 0)) for r in board)
+
+
+def default_initials(name: str) -> str:
+    """Prefill for the initials screen: first three letters of the player
+    name, uppercased; AAA when the name has none."""
+    letters = "".join(ch for ch in name.upper() if "A" <= ch <= "Z")
+    return letters[:3] or "AAA"
+
+
+def bests_path() -> str:
+    """Per-player personal bests live next to the leaderboard."""
+    return os.path.join(os.path.dirname(os.path.abspath(recordings_dir())),
+                        "personal-bests.json")
+
+
+def personal_best(path: str, name: str) -> int:
+    try:
+        with open(path, encoding="utf-8") as f:
+            return int(json.load(f).get(name, {}).get("score", 0))
+    except Exception:
+        return 0
+
+
+def update_personal_best(path: str, name: str, score: int,
+                         when: str | None = None) -> tuple[int, bool]:
+    """Record *score* if it beats *name*'s best. Returns (best, is_new)."""
+    data: dict = {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            loaded = json.load(f)
+        if isinstance(loaded, dict):
+            data = loaded
+    except Exception:
+        pass
+    prev = int(data.get(name, {}).get("score", 0))
+    if score <= prev:
+        return prev, False
+    data[name] = {"score": int(score), "date": when or time.strftime("%Y-%m-%d")}
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=1)
+    return int(score), True
+
+
 def update_leaderboard(path: str, name: str, score: int, when: str | None = None) -> list[dict]:
     """Insert an entry, keep the top LEADERBOARD_KEEP by score, persist, and
     return the board. A corrupt or missing file starts a fresh board."""
@@ -195,6 +251,7 @@ class Garden:
         root.bind("T", self._switch_tool)
         root.bind("p", self._switch_player)
         root.bind("P", self._switch_player)
+        root.bind("<Key>", self._initials_key)
         self.difficulty = difficulty if difficulty in DIFFICULTIES else None
         self.diff = DIFFICULTIES[self.difficulty or "normal"]
         if self.difficulty:
@@ -226,7 +283,7 @@ class Garden:
         self.fh = open(self.path, "a", encoding="utf-8")
 
     def _switch_player(self, e=None):
-        if self.state in ("done", "paused", "player_menu", "difficulty_menu"):
+        if self.state in ("done", "paused", "player_menu", "difficulty_menu", "initials"):
             return
         self._new_player()
 
@@ -272,7 +329,7 @@ class Garden:
             self._menu_buttons.append((self.W // 2 - 160, y - 19, self.W // 2 + 160, y + 19, cb))
 
     def _pause(self, e=None):
-        if self.state in ("done", "difficulty_menu"):
+        if self.state in ("done", "difficulty_menu", "initials"):
             return
         if self.state == "paused":                         # ESC twice = quit
             return self._quit()
@@ -283,8 +340,9 @@ class Garden:
     def _draw_pause(self):
         self.state = "paused"
         who = self.player or "default"
+        best = personal_best(bests_path(), who)
         self._menu("PAUSED", [
-            (f"RESUME  ({who} · {self.score} pts)", self._resume),
+            (f"RESUME  ({who} · {self.score} pts · best {best})", self._resume),
             ("SWITCH PLAYER", self._draw_player_menu),
             ("QUIT", self._quit),
         ])
@@ -737,20 +795,72 @@ class Garden:
             self.fh.close()
         except Exception:
             pass
-        final_score, who = self.score, self.player or "default"
+        who = self.player or "default"
+        try:
+            qualifies = board_qualifies(leaderboard_path(), self.score)
+        except Exception:
+            qualifies = False
+        if qualifies:                                      # the arcade ritual
+            return self._begin_initials(who)
+        self._conclude(who, entry_name=who)
+
+    # ---- initials entry (top-10 only) -----------------------------------
+
+    def _begin_initials(self, who):
+        self.state = "initials"
+        self.initials = default_initials(who)
+        self.canvas.delete("all")
+        ska("squash")                                      # a little fanfare for making the board
+        self._draw_initials()
+
+    def _draw_initials(self):
+        cx = self.W // 2
+        self.canvas.delete("initials")
+        self.canvas.create_text(cx, self.H // 2 - 130, text="TOP 10!", fill="#39d353",
+                                font=("Consolas", 34, "bold"), tag="initials")
+        self.canvas.create_text(cx, self.H // 2 - 80, text=f"{self.score} PTS — ENTER YOUR INITIALS",
+                                fill="#e3b341", font=("Consolas", 18, "bold"), tag="initials")
+        slots = "".join((self.initials[j] if j < len(self.initials) else "_") + "  "
+                        for j in range(3))
+        self.canvas.create_text(cx, self.H // 2, text=slots.strip(), fill="#f0f6fc",
+                                font=("Consolas", 48, "bold"), tag="initials")
+        self.canvas.create_text(cx, self.H // 2 + 70, fill="#6e7681", tag="initials",
+                                font=("Consolas", 12),
+                                text="type A-Z · BACKSPACE to fix · ENTER to confirm")
+
+    def _initials_key(self, e):
+        if self.state != "initials":
+            return
+        if e.keysym == "Return" and self.initials:
+            who = self.player or "default"
+            return self._conclude(who, entry_name=self.initials)
+        if e.keysym == "BackSpace":
+            self.initials = self.initials[:-1]
+        elif len(e.char) == 1 and e.char.isalpha() and len(self.initials) < 3:
+            self.initials += e.char.upper()
+            ska("hit")
+        self._draw_initials()
+
+    def _conclude(self, who, entry_name):
         self.state = "done"
         self.canvas.delete("all")
+        final_score = self.score
+        best, is_new_best = final_score, False
+        try:
+            best, is_new_best = update_personal_best(bests_path(), who, final_score)
+        except Exception:
+            pass
         board, mine = [], None
         if final_score > 0:                                # empty runs don't clutter the table
-            mine = {"name": who, "score": final_score, "date": time.strftime("%Y-%m-%d")}
+            mine = {"name": entry_name, "score": final_score, "date": time.strftime("%Y-%m-%d")}
             try:
-                board = update_leaderboard(leaderboard_path(), who, final_score, mine["date"])
+                board = update_leaderboard(leaderboard_path(), entry_name, final_score, mine["date"])
             except Exception:
                 board = [mine]
         ska("board")
-        self._draw_high_scores(board, mine)
+        self._draw_high_scores(board, mine, who=who, best=best, is_new_best=is_new_best)
 
-    def _draw_high_scores(self, board, mine):
+    def _draw_high_scores(self, board, mine, who="default", best=0, is_new_best=False):
         cx = self.W // 2
         self.canvas.create_text(cx, 90, text="H I G H   S C O R E S", fill="#e3b341",
                                 font=("Consolas", 30, "bold"))
@@ -773,8 +883,24 @@ class Garden:
                else "no scored rounds this run")
         self.canvas.create_text(cx, y, text=msg, fill="#e3b341",
                                 font=("Consolas", 16, "bold"))
+        if is_new_best:
+            self._blink_best(cx, y + 32)
+            y += 32
+        elif best and mine:
+            self.canvas.create_text(cx, y + 32, text=f"{who}'s best: {best}",
+                                    fill="#8b949e", font=("Consolas", 12, "bold"))
+            y += 32
         self.canvas.create_text(cx, y + 34, fill="#6e7681", font=("Consolas", 11),
                                 text=f"movement saved · {os.path.basename(self.path)}")
+
+    def _blink_best(self, x, y, on=True):
+        if self.state != "done":
+            return
+        self.canvas.delete("newbest")
+        self.canvas.create_text(x, y, text="* NEW PERSONAL BEST *",
+                                fill="#39d353" if on else "#0d1117",
+                                font=("Consolas", 16, "bold"), tag="newbest")
+        self.root.after(450, lambda: self._blink_best(x, y, not on))
 
 
 def main() -> None:

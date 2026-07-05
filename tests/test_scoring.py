@@ -83,3 +83,31 @@ def test_ska_riffs_well_formed_and_ska_is_safe_to_call():
             assert 0 < ms < 1000
     ska("board")          # fire-and-forget; must not raise even mid-test
     ska("no-such-event")  # unknown events are a no-op
+
+
+def test_board_qualifies(tmp_path):
+    from silphe.calibrate import LEADERBOARD_KEEP, board_qualifies, update_leaderboard
+    path = str(tmp_path / "leaderboard.json")
+    assert board_qualifies(path, 1)          # no board yet: anything lands
+    assert not board_qualifies(path, 0)      # zero never qualifies
+    for j in range(LEADERBOARD_KEEP):
+        update_leaderboard(path, f"p{j}", (j + 1) * 100, "2026-07-05")
+    assert board_qualifies(path, 150)        # beats the min (100)
+    assert not board_qualifies(path, 100)    # ties don't bump
+
+def test_default_initials():
+    from silphe.calibrate import default_initials
+    assert default_initials("Rebecca") == "REB"
+    assert default_initials("mc-wiz9") == "MCW"
+    assert default_initials("123") == "AAA"
+
+def test_personal_best_roundtrip(tmp_path):
+    from silphe.calibrate import personal_best, update_personal_best
+    path = str(tmp_path / "personal-bests.json")
+    assert personal_best(path, "Rebecca") == 0
+    assert update_personal_best(path, "Rebecca", 500, "2026-07-05") == (500, True)
+    assert update_personal_best(path, "Rebecca", 300, "2026-07-05") == (500, False)
+    assert update_personal_best(path, "Rebecca", 700, "2026-07-05") == (700, True)
+    assert update_personal_best(path, "marty", 100, "2026-07-05") == (100, True)
+    assert personal_best(path, "Rebecca") == 700
+    assert personal_best(path, "marty") == 100
