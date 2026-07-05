@@ -47,14 +47,15 @@ VERSION = "Andvari"
 LEADERBOARD_KEEP = 10
 GREENS = ["#0e4429", "#006d32", "#26a641", "#39d353"]
 
-# Difficulty shapes the motor challenge, not the scoring: how long you must
-# hold/track and how mean the roach is. tol_mult scales the track lock radius.
+# Difficulty shapes the motor challenge and the reward: how long you must
+# hold/track, how mean the roach is, and the score multiplier. tol_mult
+# scales the track lock radius.
 DIFFICULTIES = {
-    "easy":   {"hold_secs": 1.0, "track_secs": 3.0, "tol_mult": 1.4,
+    "easy":   {"hold_secs": 1.0, "track_secs": 3.0, "tol_mult": 1.4, "score_mult": 1.0,
                "roach_hp": (3, 4), "roach_speed": 8.0},
-    "normal": {"hold_secs": 1.2, "track_secs": 4.0, "tol_mult": 1.0,
+    "normal": {"hold_secs": 1.2, "track_secs": 4.0, "tol_mult": 1.0, "score_mult": 1.5,
                "roach_hp": (4, 6), "roach_speed": 10.0},
-    "hard":   {"hold_secs": 1.8, "track_secs": 5.0, "tol_mult": 0.7,
+    "hard":   {"hold_secs": 1.8, "track_secs": 5.0, "tol_mult": 0.7, "score_mult": 2.0,
                "roach_hp": (6, 8), "roach_speed": 13.0},
 }
 
@@ -456,7 +457,7 @@ class Garden:
         obj["device"], obj["os"] = self.device, self.os
         obj["player"] = self.player or ""
         obj["difficulty"] = self.difficulty or "normal"
-        obj["score"] = round_score(obj)
+        obj["score"] = int(round_score(obj) * self.diff["score_mult"])
         self.score += obj["score"]
         self.fh.write(json.dumps(obj) + "\n")
         self.fh.flush()

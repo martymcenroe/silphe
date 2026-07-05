@@ -29,8 +29,9 @@ poetry run silphe-play --difficulty hard   # skip the difficulty menu (easy/norm
 ## Difficulty
 
 A CHOOSE DIFFICULTY menu opens at launch unless `--difficulty` is given.
-Difficulty shapes the challenge, not the scoring: hold duration, track
-duration and lock tolerance, and the roach's health and speed. Each record
+Difficulty shapes the challenge AND the reward: hold duration, track
+duration and lock tolerance, the roach's health and speed, and a score
+multiplier (easy x1, normal x1.5, hard x2). Each record
 is stamped with the difficulty so analysis can segment by it.
 
 ## Round order
