@@ -68,9 +68,13 @@ def test_difficulties_are_well_formed():
     from silphe.calibrate import DIFFICULTIES
     assert set(DIFFICULTIES) == {"easy", "normal", "hard"}
     for d in DIFFICULTIES.values():
-        assert set(d) == {"hold_secs", "track_secs", "tol_mult", "roach_hp", "roach_speed"}
+        assert set(d) == {"hold_secs", "track_secs", "tol_mult", "roach_hp",
+                          "roach_speed", "score_mult"}
         lo, hi = d["roach_hp"]
         assert 0 < lo <= hi
+    assert (DIFFICULTIES["easy"]["score_mult"]
+            < DIFFICULTIES["normal"]["score_mult"]
+            < DIFFICULTIES["hard"]["score_mult"])
     assert DIFFICULTIES["easy"]["hold_secs"] < DIFFICULTIES["hard"]["hold_secs"]
     assert DIFFICULTIES["easy"]["roach_speed"] < DIFFICULTIES["hard"]["roach_speed"]
 
