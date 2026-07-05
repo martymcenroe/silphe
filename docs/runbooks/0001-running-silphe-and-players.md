@@ -23,13 +23,34 @@ PyInstaller build). Double-click works.
 ```
 poetry run silphe-play trackpad            # tag the session as trackpad instead of mouse
 poetry run silphe-play --player Rebecca    # start directly as a named player
+poetry run silphe-play --difficulty hard   # skip the difficulty menu (easy/normal/hard)
 ```
+
+## Difficulty
+
+A CHOOSE DIFFICULTY menu opens at launch unless `--difficulty` is given.
+Difficulty shapes the challenge, not the scoring: hold duration, track
+duration and lock tolerance, and the roach's health and speed. Each record
+is stamped with the difficulty so analysis can segment by it.
+
+## Round order
+
+Every session (including after a player switch) opens with one of each of
+acquire / track / hold in random order before the Andvari roach round can
+appear — a new player always gets the basics sampled first.
+
+## Sound
+
+Sound effects are ska horn stabs (offbeat skank for hits, a trombone slump
+for misses, a horn run for squashing the roach, a full riff on the high-score
+screen). Windows-only (`winsound`); silent no-op elsewhere. No mute flag yet —
+mute the system volume if needed.
 
 ## In-game keys
 
 | Key | Effect |
 |---|---|
-| ESC | Pause menu: RESUME / SWITCH PLAYER / QUIT. ESC again while paused quits. |
+| ESC | Pause menu: RESUME / SWITCH PLAYER / QUIT. ESC again while paused quits. (Inactive on the launch difficulty menu.) |
 | P | Switch player by typing a name (blank = default player) |
 | T | Swap swatter/pick during the Andvari (evasive) round |
 

@@ -51,3 +51,35 @@ def test_known_players_scans_sibling_dirs(tmp_path, monkeypatch):
     (tmp_path / "recordings-not-a-dir").write_text("")  # file, not a player
     monkeypatch.setenv("SILPHE_RECORDINGS", str(base))
     assert known_players() == ["Rebecca", "marty"]
+
+
+def test_make_plan_covers_basics_before_first_evasive():
+    from silphe.calibrate import make_plan
+    for _ in range(200):
+        plan = make_plan()
+        assert sorted(plan) == ["acquire"] * 4 + ["evasive"] * 2 + ["hold"] * 3 + ["track"] * 3
+        first_evasive = plan.index("evasive")
+        for kind in ("acquire", "track", "hold"):
+            assert plan.index(kind) < first_evasive
+        assert sorted(plan[:3]) == ["acquire", "hold", "track"]
+
+
+def test_difficulties_are_well_formed():
+    from silphe.calibrate import DIFFICULTIES
+    assert set(DIFFICULTIES) == {"easy", "normal", "hard"}
+    for d in DIFFICULTIES.values():
+        assert set(d) == {"hold_secs", "track_secs", "tol_mult", "roach_hp", "roach_speed"}
+        lo, hi = d["roach_hp"]
+        assert 0 < lo <= hi
+    assert DIFFICULTIES["easy"]["hold_secs"] < DIFFICULTIES["hard"]["hold_secs"]
+    assert DIFFICULTIES["easy"]["roach_speed"] < DIFFICULTIES["hard"]["roach_speed"]
+
+
+def test_ska_riffs_well_formed_and_ska_is_safe_to_call():
+    from silphe.calibrate import SKA_RIFFS, ska
+    for seq in SKA_RIFFS.values():
+        for freq, ms in seq:
+            assert freq == 0 or 37 <= freq <= 32767   # winsound.Beep's legal range
+            assert 0 < ms < 1000
+    ska("board")          # fire-and-forget; must not raise even mid-test
+    ska("no-such-event")  # unknown events are a no-op
