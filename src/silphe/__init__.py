@@ -28,6 +28,7 @@ from silphe.analysis import (
     lag_scan,
     load_recordings,
     load_session,
+    player_recordings_dir,
     recordings_dir,
     session_signature,
 )
@@ -54,4 +55,5 @@ __all__ = [
     "load_session",
     "load_recordings",
     "recordings_dir",
+    "player_recordings_dir",
 ]

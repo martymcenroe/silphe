@@ -89,3 +89,19 @@ def test_session_signature_integrates_task_types():
     assert sig["acquire"] is not None and sig["acquire"]["n"] == 1
     assert sig["hold"] is None        # no hold trials supplied
     assert sig["track"] is None
+
+
+def test_player_recordings_dir_default_is_base(monkeypatch):
+    monkeypatch.setenv("SILPHE_RECORDINGS", "/x/rec")
+    from silphe.analysis import player_recordings_dir, recordings_dir
+    assert player_recordings_dir() == recordings_dir()
+    assert player_recordings_dir(None) == "/x/rec"
+    assert player_recordings_dir("") == "/x/rec"
+
+
+def test_player_recordings_dir_sibling_and_sanitized(monkeypatch):
+    monkeypatch.setenv("SILPHE_RECORDINGS", "/x/rec")
+    from silphe.analysis import player_recordings_dir
+    assert player_recordings_dir("Rebecca") == "/x/rec-Rebecca"
+    assert player_recordings_dir("a b/../c") == "/x/rec-abc"
+    assert player_recordings_dir("../..") == "/x/rec"  # sanitizes to nothing -> base

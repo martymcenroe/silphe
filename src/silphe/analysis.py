@@ -42,6 +42,7 @@ import statistics as st
 
 __all__ = [
     "recordings_dir",
+    "player_recordings_dir",
     "load_session",
     "load_recordings",
     "acquire_stats",
@@ -65,6 +66,19 @@ def recordings_dir() -> str:
     if env:
         return env
     return os.path.join(os.path.expanduser("~"), ".silphe", "recordings")
+
+
+def player_recordings_dir(player: str | None = None) -> str:
+    """Recordings dir for *player*: a ``recordings-<name>`` sibling of
+    :func:`recordings_dir` (e.g. ``~/.silphe/recordings-Rebecca``). No player
+    (or a name that sanitizes to nothing) means the base dir — the historical
+    single-player layout. Names are restricted to ``[A-Za-z0-9_-]``.
+    """
+    base = recordings_dir()
+    if not player:
+        return base
+    safe = "".join(ch for ch in player if ch.isalnum() or ch in "-_")
+    return f"{base}-{safe}" if safe else base
 
 
 def load_session(path: str) -> list[dict]:
