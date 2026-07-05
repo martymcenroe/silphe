@@ -13,8 +13,10 @@ GitHub-contribution-graph field of squares:
 
 Everything stays on your machine (see silphe.analysis.recordings_dir). Each
 record is stamped with device + OS + player. ESC quits; progress is saved as
-you go. Press P any time to switch players — the session file closes and a
-fresh session starts in that player's own recordings-<name> directory.
+you go. ESC pauses (resume / switch player / quit; ESC again quits). Press P
+any time to switch players — the session file closes and a fresh session
+starts in that player's own recordings-<name> directory. Rounds score arcade
+points; the top 10 land on a local leaderboard shown at the end.
 
     silphe-play                     # mouse (default), after `pip install silphe`
     silphe-play trackpad            # tag the session as trackpad
@@ -33,12 +35,59 @@ import time
 import tkinter as tk
 from tkinter import simpledialog
 
-from silphe.analysis import player_recordings_dir
+from silphe.analysis import known_players, player_recordings_dir, recordings_dir
 
 VERSION = "Andvari"
+LEADERBOARD_KEEP = 10
 HOLD_SECS = 1.2
 TRACK_SECS = 4.0
 GREENS = ["#0e4429", "#006d32", "#26a641", "#39d353"]
+
+
+def round_score(obj: dict) -> int:
+    """Arcade score for one saved round. Derived only from what the round
+    already measured — accuracy pays, not speed of the machine."""
+    kind = obj.get("kind")
+    if kind == "acquire":
+        err = obj.get("click", {}).get("err", 1e9)
+        r = obj.get("target", {}).get("r", 15)
+        if err > r * 1.4:                                  # a miss scores nothing
+            return 0
+        return max(10, 100 - int(2 * err))
+    if kind == "track":
+        return int(obj.get("on_target_pct", 0))
+    if kind == "hold":
+        return 100
+    if kind == "evasive":
+        return 25 * int(obj.get("hits", 0))
+    return 0
+
+
+def leaderboard_path() -> str:
+    """The high-score table lives next to the recordings tree (local-first,
+    shared by every player on this machine)."""
+    return os.path.join(os.path.dirname(os.path.abspath(recordings_dir())),
+                        "leaderboard.json")
+
+
+def update_leaderboard(path: str, name: str, score: int, when: str | None = None) -> list[dict]:
+    """Insert an entry, keep the top LEADERBOARD_KEEP by score, persist, and
+    return the board. A corrupt or missing file starts a fresh board."""
+    board: list[dict] = []
+    try:
+        with open(path, encoding="utf-8") as f:
+            loaded = json.load(f)
+        if isinstance(loaded, list):
+            board = [r for r in loaded if isinstance(r, dict)]
+    except Exception:
+        pass
+    board.append({"name": name, "score": int(score),
+                  "date": when or time.strftime("%Y-%m-%d")})
+    board = sorted(board, key=lambda r: -int(r.get("score", 0)))[:LEADERBOARD_KEEP]
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(board, f, indent=1)
+    return board
 
 
 class Garden:
@@ -76,10 +125,12 @@ class Garden:
         self.hides = set()
         self.walls = set()
         self.tool = "swatter"
+        self.score = 0
+        self._menu_buttons = []
 
         self.canvas.bind("<Motion>", self._motion)
         self.canvas.bind("<Button-1>", self._click)
-        root.bind("<Escape>", lambda e: self._finish())
+        root.bind("<Escape>", self._pause)
         root.bind("t", self._switch_tool)
         root.bind("T", self._switch_tool)
         root.bind("p", self._switch_player)
@@ -95,25 +146,85 @@ class Garden:
         self.fh = open(self.path, "a", encoding="utf-8")
 
     def _switch_player(self, e=None):
-        if self.state == "done":
+        if self.state in ("done", "paused", "player_menu"):
             return
-        name = simpledialog.askstring(
-            "Switch player", "Player name (blank = default player):", parent=self.root)
-        if name is None:                                   # cancelled
-            return
-        name = "".join(ch for ch in name.strip() if ch.isalnum() or ch in "-_") or None
+        self._new_player()
+
+    def _choose_player(self, name: str | None):
         if name == self.player:
-            return
+            return self._resume()
         try:
             self.fh.close()
         except Exception:
             pass
         self.player = name
         self._open_session()
+        self.canvas.delete("menu")
         self.state = "idle"
         self.plan = self._make_plan()                      # fresh session for the new hand
         self.i = 0
+        self.score = 0
         self._next()
+
+    def _new_player(self, e=None):
+        name = simpledialog.askstring(
+            "Switch player", "Player name (blank = default player):", parent=self.root)
+        if name is None:                                   # cancelled
+            return
+        name = "".join(ch for ch in name.strip() if ch.isalnum() or ch in "-_") or None
+        self._choose_player(name)
+
+    # ---- pause menu (ESC) ------------------------------------------------
+
+    def _menu(self, title, entries):
+        """Draw a clickable menu. entries = [(label, callback), ...]."""
+        self._restore()
+        self.canvas.delete("hud", "menu")
+        self._menu_buttons = []
+        self.canvas.create_text(self.W // 2, self.H // 2 - 150, text=title,
+                                fill="#e3b341", font=("Consolas", 26, "bold"), tag="menu")
+        for j, (label, cb) in enumerate(entries):
+            y = self.H // 2 - 80 + j * 52
+            self.canvas.create_rectangle(self.W // 2 - 160, y - 19, self.W // 2 + 160, y + 19,
+                                         outline="#39d353", width=2, tag="menu")
+            self.canvas.create_text(self.W // 2, y, text=label, fill="#f0f6fc",
+                                    font=("Consolas", 13, "bold"), tag="menu")
+            self._menu_buttons.append((self.W // 2 - 160, y - 19, self.W // 2 + 160, y + 19, cb))
+
+    def _pause(self, e=None):
+        if self.state == "done":
+            return
+        if self.state == "paused":                         # ESC twice = quit
+            return self._quit()
+        if self.state == "player_menu":                    # ESC backs out to pause
+            return self._draw_pause()
+        self._draw_pause()                                 # abandons the round; no partial record
+
+    def _draw_pause(self):
+        self.state = "paused"
+        who = self.player or "default"
+        self._menu("PAUSED", [
+            (f"RESUME  ({who} · {self.score} pts)", self._resume),
+            ("SWITCH PLAYER", self._draw_player_menu),
+            ("QUIT", self._quit),
+        ])
+
+    def _draw_player_menu(self):
+        self.state = "player_menu"
+        entries = [("default", lambda: self._choose_player(None))]
+        entries += [(n, lambda n=n: self._choose_player(n)) for n in known_players()[:7]]
+        entries.append(("NEW PLAYER...", self._new_player))
+        entries.append(("BACK", self._draw_pause))
+        self._menu("WHO'S PLAYING?", entries)
+
+    def _resume(self):
+        self.canvas.delete("menu")
+        self.state = "idle"
+        self._next()                                       # replays the abandoned round
+
+    def _quit(self):
+        self.canvas.delete("menu")
+        self._finish()
 
     # ---- geometry / field ----------------------------------------------
 
@@ -148,6 +259,8 @@ class Garden:
         self.canvas.create_text(self.W // 2, 22, text=msg, fill=color, tag="hud",
                                 font=("Consolas", 15, "bold"))
         who = self.player or "default"
+        self.canvas.create_text(70, 22, text=f"{self.score:06d}", fill="#e3b341",
+                                tag="hud", font=("Consolas", 14, "bold"))
         self.canvas.create_text(self.W // 2, self.H - 12, fill="#6e7681", tag="hud",
                                 font=("Consolas", 10),
                                 text=f"round {min(self.i + 1, len(self.plan))}/{len(self.plan)}"
@@ -204,6 +317,8 @@ class Garden:
     def _save(self, obj):
         obj["device"], obj["os"] = self.device, self.os
         obj["player"] = self.player or ""
+        obj["score"] = round_score(obj)
+        self.score += obj["score"]
         self.fh.write(json.dumps(obj) + "\n")
         self.fh.flush()
 
@@ -465,6 +580,11 @@ class Garden:
     # ---- click router ---------------------------------------------------
 
     def _click(self, e):
+        if self.state in ("paused", "player_menu"):
+            for x0, y0, x1, y1, cb in self._menu_buttons:
+                if x0 <= e.x <= x1 and y0 <= e.y <= y1:
+                    return cb()
+            return
         if self.state == "acquire":
             tx, ty, r = self.target["x"], self.target["y"], self.target["r"]
             err = math.hypot(e.x - tx, e.y - ty)
@@ -536,10 +656,43 @@ class Garden:
             self.fh.close()
         except Exception:
             pass
-        self.canvas.delete("all")
-        self._hud("Done — thank you. Your movement is saved.", "#39d353",
-                  sub=os.path.basename(self.path))
+        final_score, who = self.score, self.player or "default"
         self.state = "done"
+        self.canvas.delete("all")
+        board, mine = [], None
+        if final_score > 0:                                # empty runs don't clutter the table
+            mine = {"name": who, "score": final_score, "date": time.strftime("%Y-%m-%d")}
+            try:
+                board = update_leaderboard(leaderboard_path(), who, final_score, mine["date"])
+            except Exception:
+                board = [mine]
+        self._draw_high_scores(board, mine)
+
+    def _draw_high_scores(self, board, mine):
+        cx = self.W // 2
+        self.canvas.create_text(cx, 90, text="H I G H   S C O R E S", fill="#e3b341",
+                                font=("Consolas", 30, "bold"))
+        self.canvas.create_text(cx, 130, text=f"{'RANK':<6}{'NAME':<16}{'SCORE':>8}   DATE",
+                                fill="#6e7681", font=("Consolas", 14, "bold"))
+        highlighted = False
+        for j, row in enumerate(board):
+            is_mine = (not highlighted and mine is not None
+                       and row.get("name") == mine["name"]
+                       and row.get("score") == mine["score"]
+                       and row.get("date") == mine["date"])
+            highlighted = highlighted or is_mine
+            color = "#39d353" if is_mine else ("#f0f6fc" if j < 3 else "#8b949e")
+            line = (f"{j + 1:<6}{str(row.get('name', '?'))[:15]:<16}"
+                    f"{int(row.get('score', 0)):>8}   {row.get('date', '')}")
+            self.canvas.create_text(cx, 168 + j * 30, text=line, fill=color,
+                                    font=("Consolas", 15, "bold"))
+        y = 168 + max(1, len(board)) * 30 + 30
+        msg = (f"{mine['name']} — {mine['score']} pts" if mine
+               else "no scored rounds this run")
+        self.canvas.create_text(cx, y, text=msg, fill="#e3b341",
+                                font=("Consolas", 16, "bold"))
+        self.canvas.create_text(cx, y + 34, fill="#6e7681", font=("Consolas", 11),
+                                text=f"movement saved · {os.path.basename(self.path)}")
 
 
 def main() -> None:

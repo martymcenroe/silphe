@@ -43,6 +43,7 @@ import statistics as st
 __all__ = [
     "recordings_dir",
     "player_recordings_dir",
+    "known_players",
     "load_session",
     "load_recordings",
     "acquire_stats",
@@ -79,6 +80,19 @@ def player_recordings_dir(player: str | None = None) -> str:
         return base
     safe = "".join(ch for ch in player if ch.isalnum() or ch in "-_")
     return f"{base}-{safe}" if safe else base
+
+
+def known_players() -> list[str]:
+    """Players who already have a ``recordings-<name>`` sibling dir next to
+    :func:`recordings_dir`. Sorted; does not include the default player.
+    """
+    base = os.path.abspath(recordings_dir())
+    parent, name = os.path.split(base)
+    prefix = name + "-"
+    if not os.path.isdir(parent):
+        return []
+    return sorted(d[len(prefix):] for d in os.listdir(parent)
+                  if d.startswith(prefix) and os.path.isdir(os.path.join(parent, d)))
 
 
 def load_session(path: str) -> list[dict]:
