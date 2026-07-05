@@ -65,7 +65,13 @@ already completed.
   directory for the game AND every analysis tool.
 - Leaderboard: `~/.silphe/leaderboard.json` — local top-10 (name / score / date),
   shown as the HIGH SCORES screen when a session ends. Shared by all players on
-  the machine. Delete the file to reset it.
+  the machine. Delete the file to reset it. A score that cracks the top 10 gets
+  the arcade initials-entry screen first (type A–Z, BACKSPACE to fix, ENTER to
+  confirm; prefilled from the player name) and the initials become the
+  leaderboard name.
+- Personal bests: `~/.silphe/personal-bests.json` — each player's best score.
+  Beating yours blinks * NEW PERSONAL BEST * on the end screen; your best also
+  shows on the pause menu next to the running score. Delete the file to reset.
 
 ## Players
 
