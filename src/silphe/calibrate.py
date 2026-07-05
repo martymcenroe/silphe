@@ -12,10 +12,13 @@ GitHub-contribution-graph field of squares:
              under silver hide-cells (they pulse red), thump it there; several hits
 
 Everything stays on your machine (see silphe.analysis.recordings_dir). Each
-record is stamped with device + OS. ESC quits; progress is saved as you go.
+record is stamped with device + OS + player. ESC quits; progress is saved as
+you go. Press P any time to switch players — the session file closes and a
+fresh session starts in that player's own recordings-<name> directory.
 
-    silphe-play            # mouse (default), after `pip install silphe`
-    silphe-play trackpad   # tag the session as trackpad
+    silphe-play                     # mouse (default), after `pip install silphe`
+    silphe-play trackpad            # tag the session as trackpad
+    silphe-play --player Rebecca    # record into ~/.silphe/recordings-Rebecca
 """
 
 from __future__ import annotations
@@ -28,10 +31,10 @@ import random
 import sys
 import time
 import tkinter as tk
+from tkinter import simpledialog
 
-from silphe.analysis import recordings_dir
+from silphe.analysis import player_recordings_dir
 
-REC_DIR = recordings_dir()
 VERSION = "Andvari"
 HOLD_SECS = 1.2
 TRACK_SECS = 4.0
@@ -39,7 +42,7 @@ GREENS = ["#0e4429", "#006d32", "#26a641", "#39d353"]
 
 
 class Garden:
-    def __init__(self, root: tk.Tk):
+    def __init__(self, root: tk.Tk, device: str = "mouse", player: str | None = None):
         self.root = root
         root.title(f"The Ministry of Silly Mice — {VERSION}")
         root.configure(bg="#0d1117")
@@ -53,11 +56,10 @@ class Garden:
         gh = self.ROWS * (self.CELL + self.GAP) - self.GAP
         self.ox, self.oy = (self.W - gw) // 2, (self.H - gh) // 2 + 12
 
-        self.device = (sys.argv[1] if len(sys.argv) > 1 else "mouse").lower()
+        self.device = device.lower()
         self.os = platform.system()
-        os.makedirs(REC_DIR, exist_ok=True)
-        self.path = os.path.join(REC_DIR, f"session-{int(time.time())}-{self.device}.jsonl")
-        self.fh = open(self.path, "a", encoding="utf-8")
+        self.player = player
+        self._open_session()
 
         self.cells, self.base = {}, {}
         self._draw_field()
@@ -80,6 +82,37 @@ class Garden:
         root.bind("<Escape>", lambda e: self._finish())
         root.bind("t", self._switch_tool)
         root.bind("T", self._switch_tool)
+        root.bind("p", self._switch_player)
+        root.bind("P", self._switch_player)
+        self._next()
+
+    # ---- players ---------------------------------------------------------
+
+    def _open_session(self):
+        rec_dir = player_recordings_dir(self.player)
+        os.makedirs(rec_dir, exist_ok=True)
+        self.path = os.path.join(rec_dir, f"session-{int(time.time())}-{self.device}.jsonl")
+        self.fh = open(self.path, "a", encoding="utf-8")
+
+    def _switch_player(self, e=None):
+        if self.state == "done":
+            return
+        name = simpledialog.askstring(
+            "Switch player", "Player name (blank = default player):", parent=self.root)
+        if name is None:                                   # cancelled
+            return
+        name = "".join(ch for ch in name.strip() if ch.isalnum() or ch in "-_") or None
+        if name == self.player:
+            return
+        try:
+            self.fh.close()
+        except Exception:
+            pass
+        self.player = name
+        self._open_session()
+        self.state = "idle"
+        self.plan = self._make_plan()                      # fresh session for the new hand
+        self.i = 0
         self._next()
 
     # ---- geometry / field ----------------------------------------------
@@ -114,9 +147,11 @@ class Garden:
         self.canvas.delete("hud")
         self.canvas.create_text(self.W // 2, 22, text=msg, fill=color, tag="hud",
                                 font=("Consolas", 15, "bold"))
+        who = self.player or "default"
         self.canvas.create_text(self.W // 2, self.H - 12, fill="#6e7681", tag="hud",
                                 font=("Consolas", 10),
                                 text=f"round {min(self.i + 1, len(self.plan))}/{len(self.plan)}"
+                                     f"   ·   player: {who} (P to switch)"
                                      f"   ·   ESC to stop (saved as you go)")
         if sub:
             self.canvas.create_text(self.W // 2, 46, fill="#6e7681", tag="hud",
@@ -168,6 +203,7 @@ class Garden:
 
     def _save(self, obj):
         obj["device"], obj["os"] = self.device, self.os
+        obj["player"] = self.player or ""
         self.fh.write(json.dumps(obj) + "\n")
         self.fh.flush()
 
@@ -507,8 +543,21 @@ class Garden:
 
 
 def main() -> None:
+    device, player = "mouse", None
+    argv = sys.argv[1:]
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a == "--player":
+            i += 1
+            player = argv[i] if i < len(argv) else None
+        elif a.startswith("--player="):
+            player = a.split("=", 1)[1]
+        else:
+            device = a
+        i += 1
     root = tk.Tk()
-    Garden(root)
+    Garden(root, device=device, player=player)
     root.mainloop()
 
 
