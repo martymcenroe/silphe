@@ -21,6 +21,11 @@ points; the top 10 land on a local leaderboard shown at the end.
     silphe-play                     # mouse (default), after `pip install silphe`
     silphe-play trackpad            # tag the session as trackpad
     silphe-play --player Rebecca    # record into ~/.silphe/recordings-Rebecca
+    silphe-play --difficulty hard   # skip the difficulty menu (easy/normal/hard)
+
+A difficulty menu opens at launch unless --difficulty is given. Sound effects
+are ska horn stabs via winsound (Windows; silent elsewhere). Every plan opens
+with one of each of acquire/track/hold before the roach can appear.
 """
 
 from __future__ import annotations
@@ -31,6 +36,7 @@ import os
 import platform
 import random
 import sys
+import threading
 import time
 import tkinter as tk
 from tkinter import simpledialog
@@ -39,9 +45,62 @@ from silphe.analysis import known_players, player_recordings_dir, recordings_dir
 
 VERSION = "Andvari"
 LEADERBOARD_KEEP = 10
-HOLD_SECS = 1.2
-TRACK_SECS = 4.0
 GREENS = ["#0e4429", "#006d32", "#26a641", "#39d353"]
+
+# Difficulty shapes the motor challenge, not the scoring: how long you must
+# hold/track and how mean the roach is. tol_mult scales the track lock radius.
+DIFFICULTIES = {
+    "easy":   {"hold_secs": 1.0, "track_secs": 3.0, "tol_mult": 1.4,
+               "roach_hp": (3, 4), "roach_speed": 8.0},
+    "normal": {"hold_secs": 1.2, "track_secs": 4.0, "tol_mult": 1.0,
+               "roach_hp": (4, 6), "roach_speed": 10.0},
+    "hard":   {"hold_secs": 1.8, "track_secs": 5.0, "tol_mult": 0.7,
+               "roach_hp": (6, 8), "roach_speed": 13.0},
+}
+
+
+def make_plan() -> list[str]:
+    """Round plan: 4 acquire, 3 track, 3 hold, 2 evasive — but the opener is
+    one of each basic type in random order, so every player is sampled on
+    acquire/track/hold before the roach ever shows up."""
+    opener = ["acquire", "track", "hold"]
+    random.shuffle(opener)
+    rest = ["acquire"] * 3 + ["track"] * 2 + ["hold"] * 2 + ["evasive"] * 2
+    random.shuffle(rest)
+    return opener + rest
+
+
+# ---- ska horn section (stdlib beeps; silent no-op off Windows) -------------
+# (freq_hz, ms) pairs; freq 0 = rest. Offbeat rests before the stabs are what
+# make it skank instead of just beep.
+SKA_RIFFS = {
+    "hit":    [(0, 30), (932, 45), (1245, 60)],                    # upstroke double-stab
+    "miss":   [(233, 90), (0, 40), (220, 150)],                    # trombone slump
+    "squash": [(622, 50), (932, 50), (1245, 50), (0, 30), (1865, 90)],  # horn run
+    "board":  [(466, 70), (0, 50), (932, 70), (0, 50), (466, 70),
+               (0, 50), (932, 70), (0, 50), (1397, 90), (1245, 90), (1865, 200)],
+}
+
+
+def ska(event: str) -> None:
+    """Fire-and-forget a riff on a daemon thread — Beep blocks, the game loop
+    must not."""
+    seq = SKA_RIFFS.get(event)
+    if not seq:
+        return
+    try:
+        import winsound
+    except ImportError:
+        return
+
+    def run():
+        for freq, ms in seq:
+            if freq:
+                winsound.Beep(freq, ms)
+            else:
+                time.sleep(ms / 1000)
+
+    threading.Thread(target=run, daemon=True).start()
 
 
 def round_score(obj: dict) -> int:
@@ -91,7 +150,8 @@ def update_leaderboard(path: str, name: str, score: int, when: str | None = None
 
 
 class Garden:
-    def __init__(self, root: tk.Tk, device: str = "mouse", player: str | None = None):
+    def __init__(self, root: tk.Tk, device: str = "mouse", player: str | None = None,
+                 difficulty: str | None = None):
         self.root = root
         root.title(f"The Ministry of Silly Mice — {VERSION}")
         root.configure(bg="#0d1117")
@@ -135,6 +195,26 @@ class Garden:
         root.bind("T", self._switch_tool)
         root.bind("p", self._switch_player)
         root.bind("P", self._switch_player)
+        self.difficulty = difficulty if difficulty in DIFFICULTIES else None
+        self.diff = DIFFICULTIES[self.difficulty or "normal"]
+        if self.difficulty:
+            self._next()
+        else:
+            self._draw_difficulty_menu()
+
+    # ---- difficulty ------------------------------------------------------
+
+    def _draw_difficulty_menu(self):
+        self.state = "difficulty_menu"
+        self._menu("CHOOSE DIFFICULTY",
+                   [(k.upper(), lambda k=k: self._choose_difficulty(k))
+                    for k in DIFFICULTIES])
+
+    def _choose_difficulty(self, name: str):
+        self.difficulty = name
+        self.diff = DIFFICULTIES[name]
+        self.canvas.delete("menu")
+        self.state = "idle"
         self._next()
 
     # ---- players ---------------------------------------------------------
@@ -146,7 +226,7 @@ class Garden:
         self.fh = open(self.path, "a", encoding="utf-8")
 
     def _switch_player(self, e=None):
-        if self.state in ("done", "paused", "player_menu"):
+        if self.state in ("done", "paused", "player_menu", "difficulty_menu"):
             return
         self._new_player()
 
@@ -192,7 +272,7 @@ class Garden:
             self._menu_buttons.append((self.W // 2 - 160, y - 19, self.W // 2 + 160, y + 19, cb))
 
     def _pause(self, e=None):
-        if self.state == "done":
+        if self.state in ("done", "difficulty_menu"):
             return
         if self.state == "paused":                         # ESC twice = quit
             return self._quit()
@@ -250,9 +330,7 @@ class Garden:
     # ---- flow -----------------------------------------------------------
 
     def _make_plan(self):
-        kinds = ["acquire"] * 4 + ["track"] * 3 + ["hold"] * 3 + ["evasive"] * 2
-        random.shuffle(kinds)
-        return kinds
+        return make_plan()
 
     def _hud(self, msg, color="#8b949e", sub=None):
         self.canvas.delete("hud")
@@ -265,6 +343,7 @@ class Garden:
                                 font=("Consolas", 10),
                                 text=f"round {min(self.i + 1, len(self.plan))}/{len(self.plan)}"
                                      f"   ·   player: {who} (P to switch)"
+                                     f"   ·   {self.difficulty or 'normal'}"
                                      f"   ·   ESC to stop (saved as you go)")
         if sub:
             self.canvas.create_text(self.W // 2, 46, fill="#6e7681", tag="hud",
@@ -275,6 +354,7 @@ class Garden:
         self._toast_xy(cx, cy, text, good)
 
     def _toast_xy(self, x, y, text, good):
+        ska("squash" if text == "SQUASHED" else ("hit" if good else "miss"))
         self.canvas.delete("toast")                       # only the latest message — no more clogging
         tid = self.canvas.create_text(x, y - self.CELL, text=text, tags=("toast",),
                                       fill="#39d353" if good else "#f85149",
@@ -317,6 +397,7 @@ class Garden:
     def _save(self, obj):
         obj["device"], obj["os"] = self.device, self.os
         obj["player"] = self.player or ""
+        obj["difficulty"] = self.difficulty or "normal"
         obj["score"] = round_score(obj)
         self.score += obj["score"]
         self.fh.write(json.dumps(obj) + "\n")
@@ -342,7 +423,7 @@ class Garden:
         cx, cy = x0 + sq / 2, y0 + sq / 2
         self.target = {
             "x0": x0, "y0": y0, "sq": sq, "cx": cx, "cy": cy,
-            "rd": sq / 8, "tol": sq / 8 + 5,                       # dot = 1/4 the square's width
+            "rd": sq / 8, "tol": (sq / 8 + 5) * self.diff["tol_mult"],  # dot = 1/4 the square's width
             "w1": 2 * math.pi * 0.18, "w2": 2 * math.pi * 0.13,   # slow, incommensurate -> smooth wander
             "ph1": random.uniform(0, 6.28), "ph2": random.uniform(0, 6.28),
             "locked": False, "lock_t": 0.0, "last_tick": time.perf_counter(),
@@ -387,9 +468,9 @@ class Garden:
         el = now - tg["lock_t"]
         self.canvas.delete("ring")
         self.canvas.create_rectangle(tg["x0"], tg["y0"] + tg["sq"] + 6,
-                                     tg["x0"] + tg["sq"] * min(1.0, el / TRACK_SECS),
+                                     tg["x0"] + tg["sq"] * min(1.0, el / self.diff["track_secs"]),
                                      tg["y0"] + tg["sq"] + 10, fill="#a371f7", outline="", tag="ring")
-        if el >= TRACK_SECS:
+        if el >= self.diff["track_secs"]:
             pct = round(100 * tg["on"] / max(1, tg["tot"]))
             self._save({"kind": "track", "square": {"x": tg["x0"], "y": tg["y0"], "size": tg["sq"]},
                         "reaction_s": round(self.first_move or 0, 4),
@@ -416,7 +497,7 @@ class Garden:
         self._hud("Hold STEADY on the single red pixel.", "#ff7b72",
                   sub="one pixel, inside the white dot — your hand vs the mouse's inertia")
         self.state = "hold"
-        self._dwell_tick("hold", HOLD_SECS, "STEADY")
+        self._dwell_tick("hold", self.diff["hold_secs"], "STEADY")
 
     def _dwell_tick(self, kind, secs, ok_text):
         if self.state != kind:
@@ -458,7 +539,7 @@ class Garden:
         self.tool = "swatter"
         self.target = {
             "cell": start, "to": start, "prog": 1.0, "px": cx, "py": cy,
-            "health": random.randint(4, 6), "hp0": 0, "speed": 10.0,
+            "health": random.randint(*self.diff["roach_hp"]), "hp0": 0, "speed": self.diff["roach_speed"],
             "hidden": False, "hide_cell": None, "hide_until": 0.0,
             "burst_until": 0.0, "pause_until": 0.0, "want_hide": False,
             "last": time.perf_counter(), "path": [], "switches": [],
@@ -580,7 +661,7 @@ class Garden:
     # ---- click router ---------------------------------------------------
 
     def _click(self, e):
-        if self.state in ("paused", "player_menu"):
+        if self.state in ("paused", "player_menu", "difficulty_menu"):
             for x0, y0, x1, y1, cb in self._menu_buttons:
                 if x0 <= e.x <= x1 and y0 <= e.y <= y1:
                     return cb()
@@ -666,6 +747,7 @@ class Garden:
                 board = update_leaderboard(leaderboard_path(), who, final_score, mine["date"])
             except Exception:
                 board = [mine]
+        ska("board")
         self._draw_high_scores(board, mine)
 
     def _draw_high_scores(self, board, mine):
@@ -696,7 +778,7 @@ class Garden:
 
 
 def main() -> None:
-    device, player = "mouse", None
+    device, player, difficulty = "mouse", None, None
     argv = sys.argv[1:]
     i = 0
     while i < len(argv):
@@ -706,11 +788,16 @@ def main() -> None:
             player = argv[i] if i < len(argv) else None
         elif a.startswith("--player="):
             player = a.split("=", 1)[1]
+        elif a == "--difficulty":
+            i += 1
+            difficulty = argv[i].lower() if i < len(argv) else None
+        elif a.startswith("--difficulty="):
+            difficulty = a.split("=", 1)[1].lower()
         else:
             device = a
         i += 1
     root = tk.Tk()
-    Garden(root, device=device, player=player)
+    Garden(root, device=device, player=player, difficulty=difficulty)
     root.mainloop()
 
 
