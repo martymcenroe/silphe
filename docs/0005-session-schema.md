@@ -12,11 +12,31 @@ Load them with `silphe.analysis.load_session(path)` or
 
 | Key | Type | Meaning |
 |---|---|---|
+| `schema_version` | int | recording schema version (see below); stamped by the capture kernel |
 | `kind` | string | `"acquire"`, `"track"`, `"hold"`, or `"evasive"` |
 | `samples` | `[[t, x, y], ...]` | the cursor trace; `t` = seconds from trial start, `x`/`y` = screen pixels |
 | `reaction_s` | number | seconds to first movement |
 | `device` | string | `"mouse"`, `"trackpad"`, … (as tagged at launch) |
 | `os` | string | `platform.system()` |
+| `player` | string | player name (`""` for the default player) |
+
+## Schema version and compatibility (the family contract)
+
+The recording schema is the one invariant shared by every build in the silphe
+family — the open toy and any downstream instrument all record byte-comparably
+so movement data and a person's signature stay portable across versions. It is
+therefore versioned and frozen:
+
+- **`silphe.core.SCHEMA_VERSION`** is the authoritative version, stamped on every
+  record by the capture kernel (`silphe.core.Recorder`).
+- **`silphe.core.KERNEL_FIELDS`** (`schema_version, device, os, player`) are the
+  fields the kernel guarantees on every record, regardless of game.
+- **Compatibility promise: additive-only within a major version.** New optional
+  fields may appear without a bump; a field is never renamed, removed, or
+  repurposed without incrementing `SCHEMA_VERSION`.
+- `tests/test_core.py` fails fast if the kernel-stamped field set drifts from
+  `KERNEL_FIELDS` without a conscious change — the guard that keeps the family
+  comparable.
 
 ## Per kind
 
