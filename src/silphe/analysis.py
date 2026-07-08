@@ -58,41 +58,10 @@ __all__ = [
 # Loading
 # --------------------------------------------------------------------------
 
-def recordings_dir() -> str:
-    """Where session recordings live. ``$SILPHE_RECORDINGS`` if set, else
-    ``~/.silphe/recordings``. Install-location independent, so the game and the
-    analyzers always agree regardless of where the package is installed.
-    """
-    env = os.environ.get("SILPHE_RECORDINGS")
-    if env:
-        return env
-    return os.path.join(os.path.expanduser("~"), ".silphe", "recordings")
-
-
-def player_recordings_dir(player: str | None = None) -> str:
-    """Recordings dir for *player*: a ``recordings-<name>`` sibling of
-    :func:`recordings_dir` (e.g. ``~/.silphe/recordings-Rebecca``). No player
-    (or a name that sanitizes to nothing) means the base dir — the historical
-    single-player layout. Names are restricted to ``[A-Za-z0-9_-]``.
-    """
-    base = recordings_dir()
-    if not player:
-        return base
-    safe = "".join(ch for ch in player if ch.isalnum() or ch in "-_")
-    return f"{base}-{safe}" if safe else base
-
-
-def known_players() -> list[str]:
-    """Players who already have a ``recordings-<name>`` sibling dir next to
-    :func:`recordings_dir`. Sorted; does not include the default player.
-    """
-    base = os.path.abspath(recordings_dir())
-    parent, name = os.path.split(base)
-    prefix = name + "-"
-    if not os.path.isdir(parent):
-        return []
-    return sorted(d[len(prefix):] for d in os.listdir(parent)
-                  if d.startswith(prefix) and os.path.isdir(os.path.join(parent, d)))
+# The recordings-dir helpers moved into the capture kernel (silphe.core, #48)
+# so the game and the analyzers share one definition. Re-exported here for
+# backward compatibility — existing callers of silphe.analysis keep working.
+from silphe.core import known_players, player_recordings_dir, recordings_dir  # noqa: E402,F401
 
 
 def load_session(path: str) -> list[dict]:

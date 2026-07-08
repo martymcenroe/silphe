@@ -33,7 +33,6 @@ from __future__ import annotations
 import json
 import math
 import os
-import platform
 import random
 import sys
 import threading
@@ -41,7 +40,7 @@ import time
 import tkinter as tk
 from tkinter import simpledialog
 
-from silphe.analysis import known_players, player_recordings_dir, recordings_dir
+from silphe.core import Recorder, known_players, recordings_dir
 
 VERSION = "Andvari"
 LEADERBOARD_KEEP = 10
@@ -223,9 +222,8 @@ class Garden:
         self.ox, self.oy = (self.W - gw) // 2, (self.H - gh) // 2 + 12
 
         self.device = device.lower()
-        self.os = platform.system()
         self.player = player
-        self._open_session()
+        self.recorder = Recorder(device=self.device, player=self.player)
 
         self.cells, self.base = {}, {}
         self._draw_field()
@@ -277,12 +275,6 @@ class Garden:
 
     # ---- players ---------------------------------------------------------
 
-    def _open_session(self):
-        rec_dir = player_recordings_dir(self.player)
-        os.makedirs(rec_dir, exist_ok=True)
-        self.path = os.path.join(rec_dir, f"session-{int(time.time())}-{self.device}.jsonl")
-        self.fh = open(self.path, "a", encoding="utf-8")
-
     def _switch_player(self, e=None):
         if self.state in ("done", "paused", "player_menu", "difficulty_menu", "initials"):
             return
@@ -291,12 +283,9 @@ class Garden:
     def _choose_player(self, name: str | None):
         if name == self.player:
             return self._resume()
-        try:
-            self.fh.close()
-        except Exception:
-            pass
+        self.recorder.close()
         self.player = name
-        self._open_session()
+        self.recorder = Recorder(device=self.device, player=self.player)
         self.canvas.delete("menu")
         self.state = "idle"
         self.plan = self._make_plan()                      # fresh session for the new hand
@@ -454,13 +443,10 @@ class Garden:
                 self.first_move = t
 
     def _save(self, obj):
-        obj["device"], obj["os"] = self.device, self.os
-        obj["player"] = self.player or ""
         obj["difficulty"] = self.difficulty or "normal"
         obj["score"] = int(round_score(obj) * self.diff["score_mult"])
         self.score += obj["score"]
-        self.fh.write(json.dumps(obj) + "\n")
-        self.fh.flush()
+        self.recorder.write(obj)   # kernel stamps schema_version, device, os, player
 
     # ---- ACQUIRE --------------------------------------------------------
 
@@ -792,10 +778,7 @@ class Garden:
     # ---- end ------------------------------------------------------------
 
     def _finish(self):
-        try:
-            self.fh.close()
-        except Exception:
-            pass
+        self.recorder.close()
         who = self.player or "default"
         try:
             qualifies = board_qualifies(leaderboard_path(), self.score)
@@ -892,7 +875,7 @@ class Garden:
                                     fill="#8b949e", font=("Consolas", 12, "bold"))
             y += 32
         self.canvas.create_text(cx, y + 34, fill="#6e7681", font=("Consolas", 11),
-                                text=f"movement saved · {os.path.basename(self.path)}")
+                                text=f"movement saved · {os.path.basename(self.recorder.path)}")
 
     def _blink_best(self, x, y, on=True):
         if self.state != "done":

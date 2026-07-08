@@ -28,9 +28,15 @@ from silphe.analysis import (
     lag_scan,
     load_recordings,
     load_session,
+    session_signature,
+)
+from silphe.core import (
+    KERNEL_FIELDS,
+    SCHEMA_VERSION,
+    Recorder,
+    known_players,
     player_recordings_dir,
     recordings_dir,
-    session_signature,
 )
 from silphe.cursor import HumanCursor, RobotCursor
 from silphe.model import DEFAULT_PROFILE, TREMOR_PROFILE, MovementModel
@@ -54,6 +60,11 @@ __all__ = [
     "lag_scan",
     "load_session",
     "load_recordings",
+    # capture kernel
+    "Recorder",
+    "SCHEMA_VERSION",
+    "KERNEL_FIELDS",
     "recordings_dir",
     "player_recordings_dir",
+    "known_players",
 ]
