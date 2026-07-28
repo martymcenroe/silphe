@@ -10,8 +10,10 @@ GitHub-contribution-graph field of squares:
   HOLD     — hold dead still on a single red pixel inside a white dot (tremor test)
   EVASIVE  — "Andvari": the garden reconfigures into a maze (green = walls) and
              a brood of roaches runs its corridors, ducking under silver
-             hide-cells in the blind alleys (they pulse red); thump them there;
-             several hits each, and the round runs until all of them are down
+             hide-cells in the blind alleys (they pulse red) and dropping into
+             dark tunnels that surface halfway across the field; crumbs pull
+             them off the run and hold them still while they eat; thump them,
+             several hits each, until the last one is down
 
 Everything stays on your machine (see silphe.analysis.recordings_dir). Each
 record is stamped with device + OS + player. ESC quits; progress is saved as
@@ -44,7 +46,8 @@ from collections import deque
 from tkinter import simpledialog
 
 from silphe.core import Recorder, known_players, recordings_dir
-from silphe.maze import dead_ends, generate as generate_maze, render as render_maze
+from silphe.maze import (dead_ends, generate as generate_maze,
+                         render as render_maze, tunnels as maze_tunnels)
 
 VERSION = "Andvari"
 LEADERBOARD_KEEP = 10
@@ -223,6 +226,13 @@ class Garden:
     BAIT_RANGE = 6
     FEED_SECS = (1.0, 1.8)
 
+    # Tunnels. A roach bolting over a mouth usually drops in and surfaces at the
+    # far end, which is halfway across the field — so you lose it, and have to
+    # work out where it comes up.
+    TUNNEL_PAIRS = 2
+    TUNNEL_SECS = (0.6, 1.2)
+    TUNNEL_ODDS = 0.7
+
     def __init__(self, root: tk.Tk, device: str = "mouse", player: str | None = None,
                  difficulty: str | None = None):
         self.root = root
@@ -261,6 +271,7 @@ class Garden:
         self.engaged = None
         self.baits, self.bait_log = {}, []
         self.next_bait = 0.0
+        self.tunnels = {}
         self.tool = "swatter"
         self.tool_switches = []
         self.target_switches = []
@@ -464,8 +475,9 @@ class Garden:
         self.roaches = []
         self.engaged = None
         self.baits = {}
+        self.tunnels = {}
         self.canvas.delete("mark", "ring", "dot", "roach", "tool", "toast",
-                           "hitmark", "bait")
+                           "hitmark", "bait", "tunnel")
 
     def _next(self):
         self._restore()
@@ -511,7 +523,8 @@ class Garden:
                     "target_switches": self.target_switches,
                     "bait": self.bait_log,
                     "roaches": [{"id": tg["id"], "hp0": tg["hp0"], "path": tg["path"],
-                                 "modes": tg["modes"]} for tg in self.roaches],
+                                 "modes": tg["modes"], "tunnels": tg["tunnels"]}
+                                for tg in self.roaches],
                     "reaction_s": round(self.first_move or 0, 4),
                     "path": self.path, "samples": self.samples,
                     "maze": render_maze(self.walls, self.ROWS, self.COLS)})
@@ -645,18 +658,28 @@ class Garden:
         self.walls = generate_maze(self.ROWS, self.COLS)
         self._paint_maze()
         paths = [rc for rc in self.cells if rc not in self.walls]
+        # Tunnels first — their mouths must sit on plain open ground, so they
+        # claim their cells before anything else can.
+        self.tunnels = {}
+        for mouth, far in maze_tunnels(self.walls, self.ROWS, self.COLS,
+                                       pairs=self.TUNNEL_PAIRS):
+            self.tunnels[mouth], self.tunnels[far] = far, mouth
+        for rc in self.tunnels:
+            self._draw_tunnel(rc)
         # Hide-holes belong in the blind alleys — cornering it in a crevice is
         # what the maze is for. Top up from open ground when the field braided
         # most of its dead ends away.
-        crevices = dead_ends(self.walls, self.ROWS, self.COLS)
+        crevices = [rc for rc in dead_ends(self.walls, self.ROWS, self.COLS)
+                    if rc not in self.tunnels]
         random.shuffle(crevices)
         hides = crevices[:5]
-        spare = [rc for rc in paths if rc not in set(hides)]
+        spare = [rc for rc in paths if rc not in set(hides) and rc not in self.tunnels]
         hides += random.sample(spare, min(5 - len(hides), len(spare)))
         self.hides = set(hides)
         for rc in self.hides:
             self.canvas.itemconfig(self.cells[rc], fill="#b1bac4")   # silver hide-holes
-        open_ground = [rc for rc in paths if rc not in self.hides] or paths
+        open_ground = [rc for rc in paths if rc not in self.hides
+                       and rc not in self.tunnels] or paths
         now = time.perf_counter()
         count = min(self.diff["roaches"], len(open_ground))
         self.roaches = [self._hatch(i, cell, now) for i, cell
@@ -670,8 +693,8 @@ class Garden:
         self.next_bait = now + random.uniform(*self.BAIT_EVERY)
         quarry = "the roach" if count == 1 else f"all {count} roaches"
         self._hud(f"ANDVARI — hunt {quarry}.", "#d29922",
-                  sub="SWATTER for a runner, T for the PICK; crumbs pull them off "
-                      "the run — swing while a head is down")
+                  sub="SWATTER for a runner, T for the PICK; crumbs pull them off the "
+                      "run, dark holes are tunnels — it comes up somewhere else")
         self.state = "evasive"
         self._show_tool()
         self._roach_tick()
@@ -686,7 +709,8 @@ class Garden:
                 "hidden": False, "hide_cell": None, "burst_until": 0.0,
                 "pause_until": 0.0, "want_hide": False, "last": now,
                 "bait_cell": None, "feed_until": 0.0, "mode": None, "modes": [],
-                "path": [], "dead": False}
+                "under": False, "tunnel_until": 0.0, "tunnel_exit": None,
+                "tunnels": [], "path": [], "dead": False}
 
     def _live(self):
         return [tg for tg in self.roaches if not tg["dead"]]
@@ -762,7 +786,7 @@ class Garden:
     def _draw_roaches(self):
         self.canvas.delete("roach")
         for tg in self._live():
-            if not tg["hidden"]:
+            if not tg["hidden"] and not tg["under"]:
                 self._draw_roach(tg)
 
     def _draw_roach(self, tg):
@@ -805,12 +829,46 @@ class Garden:
             self.target_switches.append((round(now - self.t0, 4), pick["id"]))
         return pick
 
+    # ---- tunnels --------------------------------------------------------
+
+    def _draw_tunnel(self, rc):
+        cx, cy = self._center(*rc)
+        self.canvas.create_oval(cx - 9, cy - 9, cx + 9, cy + 9, fill="#010409",
+                                outline="#484f58", width=2, tag="tunnel")
+
+    def _dive(self, tg, now):
+        """Down the hole. It is gone from the field until it surfaces at the
+        far end, which is the point — you lose it and have to work out where
+        it comes back up."""
+        mouth = tg["cell"]
+        tg["under"] = True
+        tg["tunnel_until"] = now + random.uniform(*self.TUNNEL_SECS)
+        tg["tunnel_exit"] = self.tunnels[mouth]
+        tg["bait_cell"], tg["feed_until"] = None, 0.0
+        tg["tunnels"].append({"in": round(now - self.t0, 4), "from": list(mouth),
+                              "out": None, "to": None})
+        self._set_mode(tg, "tunnelling", now)              # stamped at the dive, not a frame later
+        self._toast(mouth, "down a tunnel!", False)
+
+    def _surface(self, tg, now):
+        """Up at the far mouth, already running."""
+        cell = tg["tunnel_exit"]
+        cx, cy = self._center(*cell)
+        tg["cell"], tg["to"], tg["from"], tg["prog"] = cell, cell, None, 1.0
+        tg["px"], tg["py"], tg["heading"] = cx, cy, (cx, cy, cx, cy)
+        tg["under"], tg["tunnel_until"], tg["tunnel_exit"] = False, 0.0, None
+        tg["burst_until"] = now + 0.3                      # it comes out at a bolt
+        if tg["tunnels"] and tg["tunnels"][-1]["out"] is None:
+            tg["tunnels"][-1]["out"] = round(now - self.t0, 4)
+            tg["tunnels"][-1]["to"] = list(cell)
+
     # ---- bait -----------------------------------------------------------
 
     def _drop_bait(self, now):
         """Scatter a crumb somewhere the roaches can get to and nobody is
         standing."""
-        taken = set(self.baits) | self.hides | {tg["cell"] for tg in self._live()}
+        taken = (set(self.baits) | self.hides | set(self.tunnels)
+                 | {tg["cell"] for tg in self._live()})
         ground = [rc for rc in self.cells if rc not in self.walls and rc not in taken]
         if not ground:
             return
@@ -877,6 +935,11 @@ class Garden:
         """One roach, one frame."""
         dt = now - tg["last"]
         tg["last"] = now
+        if tg["under"]:                                    # somewhere under the field
+            if now < tg["tunnel_until"]:
+                self._set_mode(tg, "tunnelling", now)
+                return
+            self._surface(tg, now)
         if tg["hidden"]:            # lurks under the silver cell — pulses, won't leave on its own
             self._set_mode(tg, "hidden", now)
             self.canvas.itemconfig(self.cells[tg["hide_cell"]],
@@ -906,6 +969,8 @@ class Garden:
                 fleeing = True
             elif random.random() < 0.12 and now > tg["burst_until"]:
                 tg["burst_until"] = now + random.uniform(0.2, 0.5)   # chaotic random darts
+            if fleeing and tg["cell"] in self.tunnels and random.random() < self.TUNNEL_ODDS:
+                return self._dive(tg, now)
             if tg["cell"] in self.hides and (tg["want_hide"] or random.random() < 0.4):
                 tg["hidden"], tg["hide_cell"] = True, tg["cell"]
                 tg["want_hide"] = False
@@ -972,8 +1037,10 @@ class Garden:
             if not holed:
                 return self._toast_xy(e.x, e.y, "nothing in that hole", False)
             return self._stab(min(holed, key=lambda tg: tg["health"]), e)
-        loose = [tg for tg in live if not tg["hidden"]]
+        loose = [tg for tg in live if not tg["hidden"] and not tg["under"]]
         if not loose:
+            if any(tg["under"] for tg in live):
+                return self._toast_xy(e.x, e.y, "it's in the tunnels — wait for it", False)
             return self._toast_xy(e.x, e.y, "it's down a hole — need the PICK [T]", False)
         tg = min(loose, key=lambda r: math.hypot(e.x - r["px"], e.y - r["py"]))
         if math.hypot(e.x - tg["px"], e.y - tg["py"]) > 14:

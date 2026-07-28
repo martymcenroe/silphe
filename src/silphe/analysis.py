@@ -24,8 +24,9 @@ Per kind::
     acquire   : target{x, y, r}, home{x, y}, click{x, y, err}
     hold      : target{x, y, r}
     track     : dot [[t, x, y], ...]   (target trace), locked_at, on_target_pct
-    evasive   : path[[t, x, y], ...]   (trace of the roach being pursued),
-                hits, switches, target_switches, roaches[{id, hp0, path}], maze
+    evasive   : path[[t, x, y], ...]   (trace of the roach being pursued), hits,
+                switches, target_switches, bait, maze,
+                roaches[{id, hp0, path, modes, tunnels}]
 
 ``move_to``-style generated paths (see :mod:`silphe.model`) are NOT sessions;
 these helpers operate on *recorded human* sessions written by the calibration

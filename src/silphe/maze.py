@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import random
 
-__all__ = ["generate", "dead_ends", "open_cells", "components", "render"]
+__all__ = ["generate", "dead_ends", "open_cells", "components", "render", "tunnels"]
 
 _STEPS = ((1, 0), (-1, 0), (0, 1), (0, -1))
 
@@ -64,6 +64,42 @@ def dead_ends(walls: set, rows: int, cols: int) -> list:
     cornered in, and the natural homes for its hide-holes."""
     return sorted(cell for cell in open_cells(walls, rows, cols)
                   if len(_open_neighbours(walls, cell, rows, cols)) == 1)
+
+
+def tunnels(walls: set, rows: int, cols: int, rng=None, pairs: int = 2,
+            min_span: int | None = None) -> list:
+    """Link far-apart open cells into ``pairs`` tunnel mouths, as
+    ``[(mouth, exit), ...]``. No cell appears twice, so a mouth has exactly one
+    far end.
+
+    The span is the point. A tunnel that surfaced round the corner would just
+    be a shortcut; one that surfaces halfway across the field makes the player
+    lose the roach and have to find it again, which is the thing worth
+    measuring. *min_span* is a manhattan distance, defaulting to about half the
+    field.
+    """
+    rng = rng or random
+    ground = sorted(open_cells(walls, rows, cols))
+    if pairs <= 0 or len(ground) < 2:
+        return []
+    span = (rows + cols) // 2 if min_span is None else min_span
+
+    pool = list(ground)
+    rng.shuffle(pool)
+    linked, used = [], set()
+    for mouth in pool:
+        if len(linked) >= pairs:
+            break
+        if mouth in used:
+            continue
+        far = [cell for cell in pool if cell not in used and cell != mouth
+               and abs(cell[0] - mouth[0]) + abs(cell[1] - mouth[1]) >= span]
+        if not far:
+            continue
+        other = rng.choice(far)
+        used.update((mouth, other))
+        linked.append((mouth, other))
+    return linked
 
 
 def render(walls: set, rows: int, cols: int) -> list:

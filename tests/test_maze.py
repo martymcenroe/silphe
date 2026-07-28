@@ -7,7 +7,8 @@ unreachable pocket is a bug that makes a round unwinnable.
 
 import random
 
-from silphe.maze import (components, dead_ends, generate, open_cells, render)
+from silphe.maze import (components, dead_ends, generate, open_cells, render,
+                         tunnels)
 
 ROWS, COLS = 15, 30           # the garden the game actually uses
 
@@ -85,6 +86,45 @@ def test_render_round_trips_the_walls():
     back = {(r, c) for r, s in enumerate(rowstrings)
             for c, ch in enumerate(s) if ch == "#"}
     assert back == walls
+
+
+def test_tunnels_link_open_cells_far_apart():
+    """A tunnel that surfaced round the corner would be a shortcut. Surfacing
+    halfway across the field is what makes the player lose the roach."""
+    for seed in range(20):
+        walls = _field(seed)
+        ground = open_cells(walls, ROWS, COLS)
+        pairs = tunnels(walls, ROWS, COLS, rng=random.Random(seed), pairs=2)
+        assert len(pairs) == 2, f"seed {seed} produced {len(pairs)} tunnels"
+        for mouth, out in pairs:
+            assert mouth in ground and out in ground
+            assert abs(mouth[0] - out[0]) + abs(mouth[1] - out[1]) >= (ROWS + COLS) // 2
+
+
+def test_a_cell_is_never_two_tunnel_mouths():
+    walls = _field(2)
+    pairs = tunnels(walls, ROWS, COLS, rng=random.Random(2), pairs=3)
+    cells = [cell for pair in pairs for cell in pair]
+    assert len(cells) == len(set(cells))
+
+
+def test_same_seed_gives_the_same_tunnels():
+    walls = _field(9)
+    assert (tunnels(walls, ROWS, COLS, rng=random.Random(4))
+            == tunnels(walls, ROWS, COLS, rng=random.Random(4)))
+
+
+def test_tunnels_give_up_rather_than_cheat_the_span():
+    """Asked for more than the field can hold, it returns fewer — never a
+    pair that surfaces next door."""
+    walls = _field(6)
+    asked = len(open_cells(walls, ROWS, COLS)) * 2      # more pairs than there are cells
+    pairs = tunnels(walls, ROWS, COLS, rng=random.Random(1), pairs=asked)
+    assert 0 < len(pairs) < asked
+    for mouth, out in pairs:
+        assert abs(mouth[0] - out[0]) + abs(mouth[1] - out[1]) >= (ROWS + COLS) // 2
+    assert tunnels(walls, ROWS, COLS, pairs=0) == []
+    assert tunnels(set(), 1, 1, pairs=2) == []
 
 
 def test_tiny_grids_stay_walkable_instead_of_crashing():
