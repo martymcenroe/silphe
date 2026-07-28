@@ -8,8 +8,9 @@ GitHub-contribution-graph field of squares:
   TRACK    — follow a slowly-moving dot; it's quick until you lock on, then it
              settles and the clock starts (smooth pursuit)
   HOLD     — hold dead still on a single red pixel inside a white dot (tremor test)
-  EVASIVE  — "Andvari": the roach runs the dark grid (green = walls), ducks
-             under silver hide-cells (they pulse red), thump it there; several hits
+  EVASIVE  — "Andvari": the garden reconfigures into a maze (green = walls) and
+             the roach runs its corridors, ducking under silver hide-cells in
+             the blind alleys (they pulse red); thump it there; several hits
 
 Everything stays on your machine (see silphe.analysis.recordings_dir). Each
 record is stamped with device + OS + player. ESC quits; progress is saved as
@@ -38,9 +39,11 @@ import sys
 import threading
 import time
 import tkinter as tk
+from collections import deque
 from tkinter import simpledialog
 
 from silphe.core import Recorder, known_players, recordings_dir
+from silphe.maze import dead_ends, generate as generate_maze, render as render_maze
 
 VERSION = "Andvari"
 LEADERBOARD_KEEP = 10
@@ -372,6 +375,18 @@ class Garden:
                     x0, y0, x0 + self.CELL, y0 + self.CELL, fill=col, outline="#0d1117")
                 self.base[(r, c)] = col
 
+    def _paint_field(self):
+        """The garden as planted — the scatter every non-roach round sits on."""
+        for rc, item in self.cells.items():
+            self.canvas.itemconfig(item, fill=self.base[rc])
+
+    def _paint_maze(self):
+        """Reconfigure the garden into this round's maze. Walls keep the
+        contribution-graph greens, so it still reads as the same garden."""
+        for rc, item in self.cells.items():
+            self.canvas.itemconfig(
+                item, fill=random.choice(GREENS) if rc in self.walls else "#161b22")
+
     def _pick(self):
         return random.randint(0, self.ROWS - 1), random.randint(0, self.COLS - 1)
 
@@ -415,12 +430,9 @@ class Garden:
                                 font=("Consolas", 9, "bold"), tag="hitmark")
 
     def _restore(self):
-        if self.target and "cell" in self.target:
-            rc = self.target["cell"]
-            self.canvas.itemconfig(self.cells[rc], fill=self.base[rc])
-        for rc in self.hides:
-            self.canvas.itemconfig(self.cells[rc], fill=self.base[rc])
+        self._paint_field()                                # undoes targets, hides and any maze
         self.hides = set()
+        self.walls = set()
         self.canvas.delete("mark", "ring", "dot", "roach", "tool", "toast", "hitmark")
 
     def _next(self):
@@ -447,6 +459,16 @@ class Garden:
         obj["score"] = int(round_score(obj) * self.diff["score_mult"])
         self.score += obj["score"]
         self.recorder.write(obj)   # kernel stamps schema_version, device, os, player
+
+    def _save_evasive(self, tg):
+        """One squashed roach. The field layout rides along on the record —
+        anticipating a corner and reacting in the open are different
+        measurements, and without the maze the analysis cannot tell which one
+        it is looking at."""
+        self._save({"kind": "evasive", "hits": tg["hp0"], "switches": tg["switches"],
+                    "reaction_s": round(self.first_move or 0, 4),
+                    "path": tg["path"], "samples": self.samples,
+                    "maze": render_maze(self.walls, self.ROWS, self.COLS)})
 
     # ---- ACQUIRE --------------------------------------------------------
 
@@ -574,16 +596,25 @@ class Garden:
     # ---- EVASIVE: "Andvari" — the Pac-Man maze roach ------------------
 
     def _begin_evasive(self):
-        self.walls = {rc for rc, col in self.base.items() if col in GREENS}
+        self.walls = generate_maze(self.ROWS, self.COLS)
+        self._paint_maze()
         paths = [rc for rc in self.cells if rc not in self.walls]
-        self.hides = set(random.sample(paths, min(5, len(paths))))
+        # Hide-holes belong in the blind alleys — cornering it in a crevice is
+        # what the maze is for. Top up from open ground when the field braided
+        # most of its dead ends away.
+        crevices = dead_ends(self.walls, self.ROWS, self.COLS)
+        random.shuffle(crevices)
+        hides = crevices[:5]
+        spare = [rc for rc in paths if rc not in set(hides)]
+        hides += random.sample(spare, min(5 - len(hides), len(spare)))
+        self.hides = set(hides)
         for rc in self.hides:
             self.canvas.itemconfig(self.cells[rc], fill="#b1bac4")   # silver hide-holes
         start = random.choice([rc for rc in paths if rc not in self.hides] or paths)
         cx, cy = self._center(*start)
         self.tool = "swatter"
         self.target = {
-            "cell": start, "to": start, "prog": 1.0, "px": cx, "py": cy,
+            "cell": start, "to": start, "from": None, "prog": 1.0, "px": cx, "py": cy,
             "health": random.randint(*self.diff["roach_hp"]), "hp0": 0, "speed": self.diff["roach_speed"],
             "hidden": False, "hide_cell": None, "hide_until": 0.0,
             "burst_until": 0.0, "pause_until": 0.0, "want_hide": False,
@@ -620,20 +651,44 @@ class Garden:
                 out.append(nb)
         return out
 
-    def _wander(self, rc, mx, my, fleeing):
+    def _wander(self, rc, mx, my, fleeing, came_from=None):
         nb = self._neighbors(rc)
         if not nb:
             return rc
         if fleeing:
+            # Bolting, it takes whatever puts the most floor between it and the
+            # cursor — including straight back past you when you've cut it off.
             return max(nb, key=lambda cell: math.hypot(self._center(*cell)[0] - mx,
                                                        self._center(*cell)[1] - my))
-        return random.choice(nb)
+        # Ambling, it runs the corridor instead of dithering in it. Mid-corridor
+        # the only choices are onward or back the way it came, and a roach that
+        # coin-flips between them just vibrates on the spot; it turns around
+        # only where the corridor genuinely ends.
+        onward = [cell for cell in nb if cell != came_from]
+        return random.choice(onward or nb)
 
     def _toward(self, rc, goal):
-        nb = self._neighbors(rc)
-        if not nb or goal is None:
+        """The next cell on the shortest path through the maze. Greedy
+        manhattan steps walk straight into the blind alleys the maze is built
+        from, so this follows the corridors properly."""
+        if goal is None or goal == rc:
             return None
-        return min(nb, key=lambda cell: abs(cell[0] - goal[0]) + abs(cell[1] - goal[1]))
+        prev = {rc: None}
+        queue = deque([rc])
+        while queue:
+            cur = queue.popleft()
+            if cur == goal:
+                break
+            for nb in self._neighbors(cur):
+                if nb not in prev:
+                    prev[nb] = cur
+                    queue.append(nb)
+        if goal not in prev:
+            return None
+        step = goal
+        while prev[step] != rc:
+            step = prev[step]
+        return step
 
     def _nearest_hide(self, rc):
         if not self.hides:
@@ -676,7 +731,7 @@ class Garden:
             speed = 0.0
         tg["prog"] += speed * dt
         if tg["prog"] >= 1.0:                              # arrived in the next cell — decide
-            tg["prog"], tg["cell"] = 0.0, tg["to"]
+            tg["prog"], tg["from"], tg["cell"] = 0.0, tg["cell"], tg["to"]
             ccx, ccy = self._center(*tg["cell"])
             if math.hypot(mx - ccx, my - ccy) < 95 and now > tg["burst_until"]:
                 tg["burst_until"] = now + 0.5
@@ -690,11 +745,11 @@ class Garden:
                 return self.root.after(16, self._roach_tick)
             if tg["want_hide"]:
                 tg["to"] = (self._toward(tg["cell"], self._nearest_hide(tg["cell"]))
-                            or self._wander(tg["cell"], mx, my, True))
+                            or self._wander(tg["cell"], mx, my, True, tg["from"]))
             else:
                 if random.random() < 0.02:
                     tg["pause_until"] = now + random.uniform(0.1, 0.3)
-                tg["to"] = self._wander(tg["cell"], mx, my, fleeing)
+                tg["to"] = self._wander(tg["cell"], mx, my, fleeing, tg["from"])
         ax, ay = self._center(*tg["cell"])
         bx, by = self._center(*tg["to"])
         tg["px"] = ax + (bx - ax) * tg["prog"]
@@ -738,16 +793,14 @@ class Garden:
                 self.hides.discard(hc)                        # it won't hide here again this round
                 tg["hidden"], tg["hide_cell"] = False, None
                 tg["prog"], tg["burst_until"] = 0.0, time.perf_counter() + 0.4
-                tg["to"] = self._wander(tg["cell"], e.x, e.y, True)
+                tg["to"] = self._wander(tg["cell"], e.x, e.y, True, tg["from"])
                 if random.random() < 0.25:
                     tg["health"] -= 1
                     tg["speed"] *= 0.88
                     tg["hit_n"] = tg.get("hit_n", 0) + 1
                     self._hit_mark(e.x, e.y, tg["hit_n"])
                     if tg["health"] <= 0:
-                        self._save({"kind": "evasive", "hits": tg["hp0"], "switches": tg["switches"],
-                                    "reaction_s": round(self.first_move or 0, 4),
-                                    "path": tg["path"], "samples": self.samples})
+                        self._save_evasive(tg)
                         self.canvas.delete("roach")
                         self._toast_xy(e.x, e.y, "SQUASHED", True)
                         self.state = "idle"
@@ -765,9 +818,7 @@ class Garden:
             tg["hit_n"] = tg.get("hit_n", 0) + 1
             self._hit_mark(e.x, e.y, tg["hit_n"])
             if tg["health"] <= 0:
-                self._save({"kind": "evasive", "hits": tg["hp0"], "switches": tg["switches"],
-                            "reaction_s": round(self.first_move or 0, 4),
-                            "path": tg["path"], "samples": self.samples})
+                self._save_evasive(tg)
                 self.canvas.delete("roach")
                 self._toast_xy(e.x, e.y, "SQUASHED", True)
                 self.state = "idle"
