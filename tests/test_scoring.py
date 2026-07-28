@@ -69,14 +69,16 @@ def test_difficulties_are_well_formed():
     assert set(DIFFICULTIES) == {"easy", "normal", "hard"}
     for d in DIFFICULTIES.values():
         assert set(d) == {"hold_secs", "track_secs", "tol_mult", "roach_hp",
-                          "roach_speed", "score_mult"}
+                          "roach_speed", "score_mult", "roaches"}
         lo, hi = d["roach_hp"]
         assert 0 < lo <= hi
+        assert 2 <= d["roaches"] <= 3, "a round needs a brood, not a swarm"
     assert (DIFFICULTIES["easy"]["score_mult"]
             < DIFFICULTIES["normal"]["score_mult"]
             < DIFFICULTIES["hard"]["score_mult"])
     assert DIFFICULTIES["easy"]["hold_secs"] < DIFFICULTIES["hard"]["hold_secs"]
     assert DIFFICULTIES["easy"]["roach_speed"] < DIFFICULTIES["hard"]["roach_speed"]
+    assert DIFFICULTIES["easy"]["roaches"] < DIFFICULTIES["hard"]["roaches"]
 
 
 def test_ska_riffs_well_formed_and_ska_is_safe_to_call():

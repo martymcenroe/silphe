@@ -9,8 +9,9 @@ GitHub-contribution-graph field of squares:
              settles and the clock starts (smooth pursuit)
   HOLD     — hold dead still on a single red pixel inside a white dot (tremor test)
   EVASIVE  — "Andvari": the garden reconfigures into a maze (green = walls) and
-             the roach runs its corridors, ducking under silver hide-cells in
-             the blind alleys (they pulse red); thump it there; several hits
+             a brood of roaches runs its corridors, ducking under silver
+             hide-cells in the blind alleys (they pulse red); thump them there;
+             several hits each, and the round runs until all of them are down
 
 Everything stays on your machine (see silphe.analysis.recordings_dir). Each
 record is stamped with device + OS + player. ESC quits; progress is saved as
@@ -54,11 +55,11 @@ GREENS = ["#0e4429", "#006d32", "#26a641", "#39d353"]
 # scales the track lock radius.
 DIFFICULTIES = {
     "easy":   {"hold_secs": 1.0, "track_secs": 3.0, "tol_mult": 1.4, "score_mult": 1.0,
-               "roach_hp": (3, 4), "roach_speed": 8.0},
+               "roach_hp": (3, 4), "roach_speed": 8.0, "roaches": 2},
     "normal": {"hold_secs": 1.2, "track_secs": 4.0, "tol_mult": 1.0, "score_mult": 1.5,
-               "roach_hp": (4, 6), "roach_speed": 10.0},
+               "roach_hp": (4, 6), "roach_speed": 10.0, "roaches": 3},
     "hard":   {"hold_secs": 1.8, "track_secs": 5.0, "tol_mult": 0.7, "score_mult": 2.0,
-               "roach_hp": (6, 8), "roach_speed": 13.0},
+               "roach_hp": (6, 8), "roach_speed": 13.0, "roaches": 3},
 }
 
 
@@ -209,6 +210,10 @@ def update_leaderboard(path: str, name: str, score: int, when: str | None = None
 
 
 class Garden:
+    # How much closer (px) another roach has to be before the record calls it a
+    # target switch. A cursor drifting between two of them is not a decision.
+    ENGAGE_MARGIN = 25.0
+
     def __init__(self, root: tk.Tk, device: str = "mouse", player: str | None = None,
                  difficulty: str | None = None):
         self.root = root
@@ -242,7 +247,14 @@ class Garden:
         self.inside_since = None
         self.hides = set()
         self.walls = set()
+        self.maze_base = {}
+        self.roaches = []
+        self.engaged = None
         self.tool = "swatter"
+        self.tool_switches = []
+        self.target_switches = []
+        self.path = []
+        self.hit_n = 0
         self.score = 0
         self._menu_buttons = []
 
@@ -382,10 +394,14 @@ class Garden:
 
     def _paint_maze(self):
         """Reconfigure the garden into this round's maze. Walls keep the
-        contribution-graph greens, so it still reads as the same garden."""
+        contribution-graph greens, so it still reads as the same garden. The
+        colours are kept because mid-round repaints (a burnt-out hide-hole)
+        have to go back to the maze, not to the garden underneath it."""
+        self.maze_base = {}
         for rc, item in self.cells.items():
-            self.canvas.itemconfig(
-                item, fill=random.choice(GREENS) if rc in self.walls else "#161b22")
+            col = random.choice(GREENS) if rc in self.walls else "#161b22"
+            self.canvas.itemconfig(item, fill=col)
+            self.maze_base[rc] = col
 
     def _pick(self):
         return random.randint(0, self.ROWS - 1), random.randint(0, self.COLS - 1)
@@ -433,6 +449,9 @@ class Garden:
         self._paint_field()                                # undoes targets, hides and any maze
         self.hides = set()
         self.walls = set()
+        self.maze_base = {}
+        self.roaches = []
+        self.engaged = None
         self.canvas.delete("mark", "ring", "dot", "roach", "tool", "toast", "hitmark")
 
     def _next(self):
@@ -460,14 +479,25 @@ class Garden:
         self.score += obj["score"]
         self.recorder.write(obj)   # kernel stamps schema_version, device, os, player
 
-    def _save_evasive(self, tg):
-        """One squashed roach. The field layout rides along on the record —
-        anticipating a corner and reacting in the open are different
-        measurements, and without the maze the analysis cannot tell which one
-        it is looking at."""
-        self._save({"kind": "evasive", "hits": tg["hp0"], "switches": tg["switches"],
+    def _save_evasive(self):
+        """The whole round: what the player chased, what each roach did on its
+        own, and when their attention moved between them.
+
+        `path` stays exactly what it has always been — the trace of the target
+        being pursued — which is what pursuit lag is measured against. With one
+        roach that is the only roach; with several it follows the player's
+        attention, so the measurement keeps its meaning instead of correlating
+        a cursor against a roach nobody was chasing. The field layout rides
+        along too: anticipating a corner and reacting in the open are different
+        measurements, and the trace alone cannot tell them apart."""
+        self._save({"kind": "evasive",
+                    "hits": sum(tg["hp0"] for tg in self.roaches),
+                    "switches": self.tool_switches,
+                    "target_switches": self.target_switches,
+                    "roaches": [{"id": tg["id"], "hp0": tg["hp0"], "path": tg["path"]}
+                                for tg in self.roaches],
                     "reaction_s": round(self.first_move or 0, 4),
-                    "path": tg["path"], "samples": self.samples,
+                    "path": self.path, "samples": self.samples,
                     "maze": render_maze(self.walls, self.ROWS, self.COLS)})
 
     # ---- ACQUIRE --------------------------------------------------------
@@ -610,28 +640,42 @@ class Garden:
         self.hides = set(hides)
         for rc in self.hides:
             self.canvas.itemconfig(self.cells[rc], fill="#b1bac4")   # silver hide-holes
-        start = random.choice([rc for rc in paths if rc not in self.hides] or paths)
-        cx, cy = self._center(*start)
+        open_ground = [rc for rc in paths if rc not in self.hides] or paths
+        now = time.perf_counter()
+        count = min(self.diff["roaches"], len(open_ground))
+        self.roaches = [self._hatch(i, cell, now) for i, cell
+                        in enumerate(random.sample(open_ground, count))]
+        self.target = None                                 # each roach carries its own state
+        self.engaged = None
         self.tool = "swatter"
-        self.target = {
-            "cell": start, "to": start, "from": None, "prog": 1.0, "px": cx, "py": cy,
-            "health": random.randint(*self.diff["roach_hp"]), "hp0": 0, "speed": self.diff["roach_speed"],
-            "hidden": False, "hide_cell": None, "hide_until": 0.0,
-            "burst_until": 0.0, "pause_until": 0.0, "want_hide": False,
-            "last": time.perf_counter(), "path": [], "switches": [],
-        }
-        self.target["hp0"] = self.target["health"]
-        self._hud("ANDVARI — hunt the roach.", "#d29922",
-                  sub="SWATTER for the runner; press T for the PICK to stab it in its silver hole")
+        self.tool_switches, self.target_switches = [], []
+        self.path, self.hit_n = [], 0
+        quarry = "the roach" if count == 1 else f"all {count} roaches"
+        self._hud(f"ANDVARI — hunt {quarry}.", "#d29922",
+                  sub="SWATTER for a runner; press T for the PICK to stab one in its silver hole")
         self.state = "evasive"
         self._show_tool()
         self._roach_tick()
+
+    def _hatch(self, idx, cell, now):
+        """One roach on *cell*, running its own evasion from everyone else's."""
+        cx, cy = self._center(*cell)
+        health = random.randint(*self.diff["roach_hp"])
+        return {"id": idx, "cell": cell, "to": cell, "from": None, "prog": 1.0,
+                "px": cx, "py": cy, "heading": (cx, cy, cx, cy),
+                "health": health, "hp0": health, "speed": self.diff["roach_speed"],
+                "hidden": False, "hide_cell": None, "burst_until": 0.0,
+                "pause_until": 0.0, "want_hide": False, "last": now,
+                "path": [], "dead": False}
+
+    def _live(self):
+        return [tg for tg in self.roaches if not tg["dead"]]
 
     def _switch_tool(self, e=None):
         if self.state != "evasive":
             return
         self.tool = "pick" if self.tool == "swatter" else "swatter"
-        self.target["switches"].append((round(time.perf_counter() - self.t0, 4), self.tool))
+        self.tool_switches.append((round(time.perf_counter() - self.t0, 4), self.tool))
         self._show_tool()
 
     def _show_tool(self):
@@ -695,9 +739,14 @@ class Garden:
             return None
         return min(self.hides, key=lambda h: abs(h[0] - rc[0]) + abs(h[1] - rc[1]))
 
-    def _draw_roach(self, ax, ay, bx, by):
+    def _draw_roaches(self):
         self.canvas.delete("roach")
-        tg = self.target
+        for tg in self._live():
+            if not tg["hidden"]:
+                self._draw_roach(tg)
+
+    def _draw_roach(self, tg):
+        ax, ay, bx, by = tg["heading"]
         x, y = tg["px"], tg["py"]
         ang = math.atan2(by - ay, bx - ax) if (bx != ax or by != ay) else 0.0
         body = "#a9712f" if tg["health"] < tg["hp0"] else "#6e4b1f"
@@ -711,20 +760,53 @@ class Garden:
         self.canvas.create_text(x, y - 14, text="•" * tg["health"], fill="#f85149",
                                 font=("Consolas", 9, "bold"), tag="roach")
 
+    def _quarry(self, now, mx, my):
+        """Whichever roach the player is going for. A roach that has ducked
+        into a hole still counts — waiting over the hole it vanished into is
+        part of the pursuit, not a break in it.
+
+        The hysteresis is what makes this a measurement rather than noise: a
+        cursor sitting midway between two roaches would otherwise flap the
+        record back and forth every frame, and a switch is only a switch if
+        the player actually committed to the other one.
+        """
+        live = self._live()
+        if not live:
+            return None
+        pick = min(live, key=lambda tg: math.hypot(mx - tg["px"], my - tg["py"]))
+        held = next((tg for tg in live if tg["id"] == self.engaged), None)
+        if held is not None and held is not pick:
+            gain = (math.hypot(mx - held["px"], my - held["py"])
+                    - math.hypot(mx - pick["px"], my - pick["py"]))
+            if gain < self.ENGAGE_MARGIN:
+                pick = held
+        if pick["id"] != self.engaged:
+            self.engaged = pick["id"]
+            self.target_switches.append((round(now - self.t0, 4), pick["id"]))
+        return pick
+
     def _roach_tick(self):
         if self.state != "evasive":
             return
-        tg = self.target
         now = time.perf_counter()
+        mx, my = self.last
+        for tg in self._live():
+            self._advance(tg, now, mx, my)
+        quarry = self._quarry(now, mx, my)
+        if quarry is not None:
+            self.path.append((round(now - self.t0, 4),
+                              round(quarry["px"], 1), round(quarry["py"], 1)))
+        self._draw_roaches()
+        self.root.after(16, self._roach_tick)
+
+    def _advance(self, tg, now, mx, my):
+        """One roach, one frame."""
         dt = now - tg["last"]
         tg["last"] = now
-        mx, my = self.last
-
-        if tg["hidden"]:                                  # lurks under the silver cell — pulses, won't leave on its own
+        if tg["hidden"]:            # lurks under the silver cell — pulses, won't leave on its own
             self.canvas.itemconfig(self.cells[tg["hide_cell"]],
                                    fill="#f85149" if (now * 4) % 2 < 1 else "#b1bac4")
-            return self.root.after(16, self._roach_tick)
-
+            return
         fleeing = now < tg["burst_until"]
         speed = tg["speed"] * (2.0 if fleeing else 1.0)
         if now < tg["pause_until"] and not fleeing:
@@ -740,9 +822,8 @@ class Garden:
                 tg["burst_until"] = now + random.uniform(0.2, 0.5)   # chaotic random darts
             if tg["cell"] in self.hides and (tg["want_hide"] or random.random() < 0.4):
                 tg["hidden"], tg["hide_cell"] = True, tg["cell"]
-                tg["picked_this_hide"], tg["want_hide"] = False, False
-                self.canvas.delete("roach")
-                return self.root.after(16, self._roach_tick)
+                tg["want_hide"] = False
+                return
             if tg["want_hide"]:
                 tg["to"] = (self._toward(tg["cell"], self._nearest_hide(tg["cell"]))
                             or self._wander(tg["cell"], mx, my, True, tg["from"]))
@@ -754,9 +835,8 @@ class Garden:
         bx, by = self._center(*tg["to"])
         tg["px"] = ax + (bx - ax) * tg["prog"]
         tg["py"] = ay + (by - ay) * tg["prog"]
+        tg["heading"] = (ax, ay, bx, by)
         tg["path"].append((round(now - self.t0, 4), round(tg["px"], 1), round(tg["py"], 1)))
-        self._draw_roach(ax, ay, bx, by)
-        self.root.after(16, self._roach_tick)
 
     # ---- click router ---------------------------------------------------
 
@@ -779,52 +859,64 @@ class Garden:
             self.i += 1
             self.root.after(700, self._next)
         elif self.state == "evasive":
-            tg = self.target
-            if tg["hidden"]:                                  # in the hole -> PICK only
-                if self.tool != "pick":
-                    return self._toast_xy(e.x, e.y, "need the PICK [T]", False)
-                hc = tg["hide_cell"]
-                x0, y0 = self._cell_xy(*hc)
-                if not (x0 <= e.x <= x0 + self.CELL and y0 <= e.y <= y0 + self.CELL):
-                    return
-                # a stab into the big hole ALWAYS scares it out and burns the hole for good,
-                # but only lands a wound 1-in-4
-                self.canvas.itemconfig(self.cells[hc], fill=self.base[hc])
-                self.hides.discard(hc)                        # it won't hide here again this round
-                tg["hidden"], tg["hide_cell"] = False, None
-                tg["prog"], tg["burst_until"] = 0.0, time.perf_counter() + 0.4
-                tg["to"] = self._wander(tg["cell"], e.x, e.y, True, tg["from"])
-                if random.random() < 0.25:
-                    tg["health"] -= 1
-                    tg["speed"] *= 0.88
-                    tg["hit_n"] = tg.get("hit_n", 0) + 1
-                    self._hit_mark(e.x, e.y, tg["hit_n"])
-                    if tg["health"] <= 0:
-                        self._save_evasive(tg)
-                        self.canvas.delete("roach")
-                        self._toast_xy(e.x, e.y, "SQUASHED", True)
-                        self.state = "idle"
-                        self.i += 1
-                        return self.root.after(800, self._next)
-                    return self._toast_xy(e.x, e.y, "STABBED it!", True)
-                return self._toast_xy(e.x, e.y, "missed — it bolted out", False)
+            self._click_evasive(e)
 
-            if self.tool != "swatter":                        # on the run -> SWATTER
-                return self._toast_xy(e.x, e.y, "use the SWATTER [T]", False)
-            if math.hypot(e.x - tg["px"], e.y - tg["py"]) > 14:
-                return
-            tg["health"] -= 1
-            tg["speed"] *= 0.88                               # wounded wood roach slows down
-            tg["hit_n"] = tg.get("hit_n", 0) + 1
-            self._hit_mark(e.x, e.y, tg["hit_n"])
-            if tg["health"] <= 0:
-                self._save_evasive(tg)
-                self.canvas.delete("roach")
-                self._toast_xy(e.x, e.y, "SQUASHED", True)
-                self.state = "idle"
-                self.i += 1
-                return self.root.after(800, self._next)
-            self._toast_xy(e.x, e.y, "hit!", True)
+    def _in_cell(self, e, rc):
+        x0, y0 = self._cell_xy(*rc)
+        return x0 <= e.x <= x0 + self.CELL and y0 <= e.y <= y0 + self.CELL
+
+    def _click_evasive(self, e):
+        """One swing. The pick reaches into a hole, the swatter only catches
+        one in the open, and either way it lands on whichever roach is nearest
+        the swing — you commit to a target by aiming at it."""
+        live = self._live()
+        if not live:
+            return
+        if self.tool == "pick":
+            holed = [tg for tg in live if tg["hidden"] and self._in_cell(e, tg["hide_cell"])]
+            if not holed:
+                return self._toast_xy(e.x, e.y, "nothing in that hole", False)
+            return self._stab(min(holed, key=lambda tg: tg["health"]), e)
+        loose = [tg for tg in live if not tg["hidden"]]
+        if not loose:
+            return self._toast_xy(e.x, e.y, "it's down a hole — need the PICK [T]", False)
+        tg = min(loose, key=lambda r: math.hypot(e.x - r["px"], e.y - r["py"]))
+        if math.hypot(e.x - tg["px"], e.y - tg["py"]) > 14:
+            return
+        self._wound(tg, e, "hit!")
+
+    def _stab(self, tg, e):
+        """A stab into the big hole ALWAYS scares it out and burns the hole for
+        good, but only lands a wound one time in four."""
+        hc = tg["hide_cell"]
+        self.canvas.itemconfig(self.cells[hc], fill=self.maze_base[hc])
+        self.hides.discard(hc)                            # it won't hide here again this round
+        tg["hidden"], tg["hide_cell"] = False, None
+        tg["prog"], tg["burst_until"] = 0.0, time.perf_counter() + 0.4
+        tg["to"] = self._wander(tg["cell"], e.x, e.y, True, tg["from"])
+        if random.random() < 0.25:
+            return self._wound(tg, e, "STABBED it!")
+        self._toast_xy(e.x, e.y, "missed — it bolted out", False)
+
+    def _wound(self, tg, e, text):
+        tg["health"] -= 1
+        tg["speed"] *= 0.88                               # wounded wood roach slows down
+        self.hit_n += 1
+        self._hit_mark(e.x, e.y, self.hit_n)
+        if tg["health"] > 0:
+            return self._toast_xy(e.x, e.y, text, True)
+        tg["dead"] = True
+        if tg["id"] == self.engaged:
+            self.engaged = None                           # re-home onto whatever is left
+        left = len(self._live())
+        if left:
+            return self._toast_xy(e.x, e.y, f"SQUASHED — {left} to go", True)
+        self._save_evasive()
+        self.canvas.delete("roach")
+        self._toast_xy(e.x, e.y, "SQUASHED", True)
+        self.state = "idle"
+        self.i += 1
+        self.root.after(800, self._next)
 
     # ---- end ------------------------------------------------------------
 

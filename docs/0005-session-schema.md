@@ -19,6 +19,8 @@ Load them with `silphe.analysis.load_session(path)` or
 | `device` | string | `"mouse"`, `"trackpad"`, … (as tagged at launch) |
 | `os` | string | `platform.system()` |
 | `player` | string | player name (`""` for the default player) |
+| `difficulty` | string | `"easy"`, `"normal"` or `"hard"` — the round's setting |
+| `score` | int | arcade points the round earned, already multiplied by the difficulty multiplier |
 
 ## Schema version and compatibility (the family contract)
 
@@ -62,14 +64,25 @@ therefore versioned and frozen:
 | `locked_at` | seconds when the player first locked on (analysis uses only the post-lock tail) |
 | `on_target_pct` | percent of post-lock time on the dot |
 
-**evasive** ("Andvari") — hunt a maze roach.
+**evasive** ("Andvari") — hunt a brood of maze roaches. One record per round;
+the round runs until every roach is down.
 
 | Key | Meaning |
 |---|---|
-| `path` | `[[t, x, y], ...]` — the roach's trace |
-| `hits` | total hits to kill it |
+| `path` | `[[t, x, y], ...]` — the trace of the roach being pursued (see below) |
+| `hits` | total hits to kill them all |
 | `switches` | `[[t, tool], ...]` — tool switches |
+| `target_switches` | `[[t, roach_id], ...]` — when the player's attention moved to another roach |
+| `roaches` | `[{id, hp0, path}, ...]` — every roach's own trace and starting health |
 | `maze` | `["#####", "#...#", ...]` — the round's field, one string per grid row, `#` wall and `.` open |
+
+`path` is the trace of whichever roach the player was chasing at each moment,
+which is what pursuit lag is measured against. With a single roach that is
+simply the only roach — its meaning has not changed — and with several it
+follows the player's attention, so the measurement stays honest instead of
+correlating a cursor against a roach nobody was looking at. `roaches[*].path`
+holds each individual trace when you want them separately, and
+`target_switches` marks where `path` hands over from one roach to the next.
 
 The `maze` field (added #43) is what lets analysis separate *anticipating a
 corner* from *reacting in the open* — the same chase over a corridor and over a
