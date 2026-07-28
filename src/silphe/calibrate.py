@@ -214,6 +214,15 @@ class Garden:
     # target switch. A cursor drifting between two of them is not a decision.
     ENGAGE_MARGIN = 25.0
 
+    # Crumbs. A roach that smells one inside BAIT_RANGE cells breaks off its
+    # evasion to go and eat, and stands still for FEED_SECS with its head down —
+    # which is the whole point, because a baited roach and a bolting one are two
+    # different things to chase.
+    MAX_BAIT = 2
+    BAIT_EVERY = (3.0, 6.0)
+    BAIT_RANGE = 6
+    FEED_SECS = (1.0, 1.8)
+
     def __init__(self, root: tk.Tk, device: str = "mouse", player: str | None = None,
                  difficulty: str | None = None):
         self.root = root
@@ -250,6 +259,8 @@ class Garden:
         self.maze_base = {}
         self.roaches = []
         self.engaged = None
+        self.baits, self.bait_log = {}, []
+        self.next_bait = 0.0
         self.tool = "swatter"
         self.tool_switches = []
         self.target_switches = []
@@ -452,7 +463,9 @@ class Garden:
         self.maze_base = {}
         self.roaches = []
         self.engaged = None
-        self.canvas.delete("mark", "ring", "dot", "roach", "tool", "toast", "hitmark")
+        self.baits = {}
+        self.canvas.delete("mark", "ring", "dot", "roach", "tool", "toast",
+                           "hitmark", "bait")
 
     def _next(self):
         self._restore()
@@ -489,13 +502,16 @@ class Garden:
         attention, so the measurement keeps its meaning instead of correlating
         a cursor against a roach nobody was chasing. The field layout rides
         along too: anticipating a corner and reacting in the open are different
-        measurements, and the trace alone cannot tell them apart."""
+        measurements, and the trace alone cannot tell them apart. So is each
+        roach's mode timeline, because chasing something drawn to a crumb and
+        chasing something bolting from you are also different measurements."""
         self._save({"kind": "evasive",
                     "hits": sum(tg["hp0"] for tg in self.roaches),
                     "switches": self.tool_switches,
                     "target_switches": self.target_switches,
-                    "roaches": [{"id": tg["id"], "hp0": tg["hp0"], "path": tg["path"]}
-                                for tg in self.roaches],
+                    "bait": self.bait_log,
+                    "roaches": [{"id": tg["id"], "hp0": tg["hp0"], "path": tg["path"],
+                                 "modes": tg["modes"]} for tg in self.roaches],
                     "reaction_s": round(self.first_move or 0, 4),
                     "path": self.path, "samples": self.samples,
                     "maze": render_maze(self.walls, self.ROWS, self.COLS)})
@@ -650,9 +666,12 @@ class Garden:
         self.tool = "swatter"
         self.tool_switches, self.target_switches = [], []
         self.path, self.hit_n = [], 0
+        self.baits, self.bait_log = {}, []
+        self.next_bait = now + random.uniform(*self.BAIT_EVERY)
         quarry = "the roach" if count == 1 else f"all {count} roaches"
         self._hud(f"ANDVARI — hunt {quarry}.", "#d29922",
-                  sub="SWATTER for a runner; press T for the PICK to stab one in its silver hole")
+                  sub="SWATTER for a runner, T for the PICK; crumbs pull them off "
+                      "the run — swing while a head is down")
         self.state = "evasive"
         self._show_tool()
         self._roach_tick()
@@ -666,6 +685,7 @@ class Garden:
                 "health": health, "hp0": health, "speed": self.diff["roach_speed"],
                 "hidden": False, "hide_cell": None, "burst_until": 0.0,
                 "pause_until": 0.0, "want_hide": False, "last": now,
+                "bait_cell": None, "feed_until": 0.0, "mode": None, "modes": [],
                 "path": [], "dead": False}
 
     def _live(self):
@@ -785,11 +805,65 @@ class Garden:
             self.target_switches.append((round(now - self.t0, 4), pick["id"]))
         return pick
 
+    # ---- bait -----------------------------------------------------------
+
+    def _drop_bait(self, now):
+        """Scatter a crumb somewhere the roaches can get to and nobody is
+        standing."""
+        taken = set(self.baits) | self.hides | {tg["cell"] for tg in self._live()}
+        ground = [rc for rc in self.cells if rc not in self.walls and rc not in taken]
+        if not ground:
+            return
+        rc = random.choice(ground)
+        cx, cy = self._center(*rc)
+        self.baits[rc] = self.canvas.create_oval(cx - 4, cy - 4, cx + 4, cy + 4,
+                                                 fill="#d29922", outline="#8b6914",
+                                                 tag="bait")
+        self.bait_log.append({"cell": list(rc), "spawned": round(now - self.t0, 4),
+                              "eaten": None, "by": None})
+
+    def _lure(self, tg):
+        """The crumb this roach is going for, if any. It stays with the one it
+        committed to, and only notices a fresh one within smelling distance."""
+        if tg["bait_cell"] in self.baits:
+            return tg["bait_cell"]
+        if not self.baits:
+            return None
+        r, c = tg["cell"]
+        near = min(self.baits, key=lambda rc: abs(rc[0] - r) + abs(rc[1] - c))
+        gap = abs(near[0] - r) + abs(near[1] - c)
+        return near if gap <= self.BAIT_RANGE else None
+
+    def _eat_bait(self, tg, now):
+        """It finishes the crumb. Swat it mid-meal and the crumb survives for
+        whoever comes along next."""
+        rc = tg["bait_cell"]
+        tg["bait_cell"], tg["feed_until"] = None, 0.0
+        item = self.baits.pop(rc, None)
+        if item is not None:
+            self.canvas.delete(item)
+        for entry in self.bait_log:
+            if tuple(entry["cell"]) == rc and entry["eaten"] is None:
+                entry["eaten"], entry["by"] = round(now - self.t0, 4), tg["id"]
+                break
+
+    def _set_mode(self, tg, mode, now):
+        """A roach's mode timeline, so analysis can segment the chase: pursuing
+        something baited is a different measurement from pursuing something
+        bolting."""
+        if tg["mode"] == mode:
+            return
+        tg["mode"] = mode
+        tg["modes"].append((round(now - self.t0, 4), mode))
+
     def _roach_tick(self):
         if self.state != "evasive":
             return
         now = time.perf_counter()
         mx, my = self.last
+        if len(self.baits) < self.MAX_BAIT and now >= self.next_bait:
+            self._drop_bait(now)
+            self.next_bait = now + random.uniform(*self.BAIT_EVERY)
         for tg in self._live():
             self._advance(tg, now, mx, my)
         quarry = self._quarry(now, mx, my)
@@ -804,12 +878,22 @@ class Garden:
         dt = now - tg["last"]
         tg["last"] = now
         if tg["hidden"]:            # lurks under the silver cell — pulses, won't leave on its own
+            self._set_mode(tg, "hidden", now)
             self.canvas.itemconfig(self.cells[tg["hide_cell"]],
                                    fill="#f85149" if (now * 4) % 2 < 1 else "#b1bac4")
             return
         fleeing = now < tg["burst_until"]
+        if fleeing and tg["bait_cell"] is not None:
+            tg["bait_cell"], tg["feed_until"] = None, 0.0   # a scare beats an appetite
+        elif tg["bait_cell"] is not None and tg["feed_until"] and now >= tg["feed_until"]:
+            self._eat_bait(tg, now)
+        feeding = now < tg["feed_until"]
+        self._set_mode(tg, "fleeing" if fleeing else
+                       "feeding" if feeding else
+                       "baited" if tg["bait_cell"] is not None else "wander", now)
+
         speed = tg["speed"] * (2.0 if fleeing else 1.0)
-        if now < tg["pause_until"] and not fleeing:
+        if not fleeing and (feeding or now < tg["pause_until"]):
             speed = 0.0
         tg["prog"] += speed * dt
         if tg["prog"] >= 1.0:                              # arrived in the next cell — decide
@@ -818,13 +902,24 @@ class Garden:
             if math.hypot(mx - ccx, my - ccy) < 95 and now > tg["burst_until"]:
                 tg["burst_until"] = now + 0.5
                 tg["want_hide"] = random.random() < 0.3
+                tg["bait_cell"], tg["feed_until"] = None, 0.0
+                fleeing = True
             elif random.random() < 0.12 and now > tg["burst_until"]:
                 tg["burst_until"] = now + random.uniform(0.2, 0.5)   # chaotic random darts
             if tg["cell"] in self.hides and (tg["want_hide"] or random.random() < 0.4):
                 tg["hidden"], tg["hide_cell"] = True, tg["cell"]
                 tg["want_hide"] = False
                 return
-            if tg["want_hide"]:
+            crumb = None if (fleeing or tg["want_hide"]) else self._lure(tg)
+            if crumb is not None:
+                tg["bait_cell"] = crumb
+                if tg["cell"] == crumb:                    # head down, and vulnerable
+                    tg["feed_until"] = now + random.uniform(*self.FEED_SECS)
+                    tg["to"] = tg["cell"]
+                else:
+                    tg["to"] = (self._toward(tg["cell"], crumb)
+                                or self._wander(tg["cell"], mx, my, False, tg["from"]))
+            elif tg["want_hide"]:
                 tg["to"] = (self._toward(tg["cell"], self._nearest_hide(tg["cell"]))
                             or self._wander(tg["cell"], mx, my, True, tg["from"]))
             else:

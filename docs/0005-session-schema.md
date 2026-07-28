@@ -73,7 +73,8 @@ the round runs until every roach is down.
 | `hits` | total hits to kill them all |
 | `switches` | `[[t, tool], ...]` — tool switches |
 | `target_switches` | `[[t, roach_id], ...]` — when the player's attention moved to another roach |
-| `roaches` | `[{id, hp0, path}, ...]` — every roach's own trace and starting health |
+| `roaches` | `[{id, hp0, path, modes}, ...]` — every roach's own trace, starting health and mode timeline |
+| `bait` | `[{cell, spawned, eaten, by}, ...]` — each crumb, when it appeared and which roach finished it (`eaten`/`by` are `null` if it survived the round) |
 | `maze` | `["#####", "#...#", ...]` — the round's field, one string per grid row, `#` wall and `.` open |
 
 `path` is the trace of whichever roach the player was chasing at each moment,
