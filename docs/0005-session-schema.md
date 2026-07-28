@@ -73,9 +73,20 @@ the round runs until every roach is down.
 | `hits` | total hits to kill them all |
 | `switches` | `[[t, tool], ...]` — tool switches |
 | `target_switches` | `[[t, roach_id], ...]` — when the player's attention moved to another roach |
-| `roaches` | `[{id, hp0, path, modes}, ...]` — every roach's own trace, starting health and mode timeline |
+| `roaches` | `[{id, hp0, path, modes, tunnels}, ...]` — every roach's own trace, starting health, mode timeline and tunnel trips |
 | `bait` | `[{cell, spawned, eaten, by}, ...]` — each crumb, when it appeared and which roach finished it (`eaten`/`by` are `null` if it survived the round) |
 | `maze` | `["#####", "#...#", ...]` — the round's field, one string per grid row, `#` wall and `.` open |
+
+`roaches[*].modes` is a list of `[t, mode]` transitions — `wander`, `fleeing`,
+`baited`, `feeding`, `hidden`, `tunnelling` — so a chase can be segmented by
+what the roach was doing rather than treated as one behaviour.
+
+`roaches[*].tunnels` is a list of `{in, from, out, to}` trips: when the roach
+dropped into a tunnel mouth and where, and when it surfaced and where. Between
+those two stamps the roach is off the field and the player has lost it, so the
+cursor trace over that window and just after it is the re-acquisition — finding
+the target again and re-homing on it. `out`/`to` are `null` for a trip still
+underway when the round ended.
 
 `path` is the trace of whichever roach the player was chasing at each moment,
 which is what pursuit lag is measured against. With a single roach that is

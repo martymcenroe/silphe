@@ -6,6 +6,7 @@ fail if the wiring is wrong in a way the pure-logic tests cannot see.
 """
 
 import json
+import math
 import time
 
 import pytest
@@ -73,6 +74,14 @@ def run(garden, frames=60):
         garden._roach_tick()
 
 
+def on_field(tg):
+    """Bring a roach up and out — neither down a hide-hole nor in the tunnels.
+    A swing cannot reach either, by design, so a test that means to land one
+    has to fetch the roach into the open first."""
+    tg["hidden"], tg["hide_cell"] = False, None
+    tg["under"], tg["tunnel_until"], tg["tunnel_exit"] = False, 0.0, None
+
+
 def swat(garden, tg):
     """Kill *tg* outright with a swing it cannot dodge.
 
@@ -82,7 +91,8 @@ def swat(garden, tg):
     entirely.
     """
     garden.tool = "swatter"
-    tg["hidden"], tg["health"] = False, 1
+    on_field(tg)
+    tg["health"] = 1
     bystanders = [(o, o["px"], o["py"]) for o in garden._live() if o is not tg]
     for other, _, _ in bystanders:
         other["px"], other["py"] = -1000.0, -1000.0
@@ -97,15 +107,66 @@ def freeze(garden):
     cursor is relative to the roaches, so letting them scuttle mid-assertion
     would make the result depend on the roll of their evasion."""
     for tg in garden.roaches:
-        tg["speed"], tg["hidden"] = 0.0, False
+        tg["speed"] = 0.0
+        on_field(tg)
 
 
-def no_dice(monkeypatch):
+def stand_apart(garden):
+    """Park a frozen brood on well-separated ground.
+
+    An attention test is about the cursor moving from one roach to another,
+    which measures nothing if two of them are sitting on top of each other —
+    and they may be, since roaches are free to share a cell. `prog` is zeroed
+    so each one interpolates to its own cell centre and stays there.
+    """
+    ground = sorted(open_cells(garden.walls, garden.ROWS, garden.COLS))
+    spots = [ground[0], ground[-1], ground[len(ground) // 3]]
+    for tg, cell in zip(garden.roaches, spots):
+        tg["cell"], tg["to"], tg["from"], tg["prog"] = cell, cell, None, 0.0
+        tg["px"], tg["py"] = garden._center(*cell)
+    points = [(tg["px"], tg["py"]) for tg in garden.roaches]
+    for i, one in enumerate(points):
+        for other in points[i + 1:]:
+            assert math.hypot(one[0] - other[0], one[1] - other[1]) > \
+                garden.ENGAGE_MARGIN * 4, "these two are too close to tell apart"
+
+
+def settle(garden):
+    """Put the brood back to an unstartled standstill.
+
+    The round has already ticked once by the time a test body runs — the
+    fixture starts it — and that tick rolls the dice with the cursor parked
+    mid-canvas. Anything it set is a wall-clock deadline: an idle pause of a
+    third of a second, a scare of half a second, a meal of nearly two. This
+    loop runs at machine speed, so any one of them outlives the entire test
+    and the roach simply never moves.
+    """
+    for tg in garden.roaches:
+        tg["burst_until"] = tg["pause_until"] = tg["feed_until"] = 0.0
+        tg["want_hide"], tg["bait_cell"] = False, None
+        tg["hidden"], tg["hide_cell"] = False, None
+        tg["under"], tg["tunnel_until"], tg["tunnel_exit"] = False, 0.0, None
+
+
+def no_dice(monkeypatch, garden=None):
     """Hold every chance-driven urge — the random darts, the whim to hole up,
-    the idle pauses. What is left is a roach that responds only to what the
-    test puts in front of it."""
+    the idle pauses, the drop into a tunnel. What is left is a roach that
+    responds only to what the test puts in front of it. Pass the garden to
+    `settle` it as well, which any test that needs a roach to move must do."""
     from silphe import calibrate
     monkeypatch.setattr(calibrate.random, "random", lambda: 1.0)
+    if garden is not None:
+        settle(garden)
+
+
+def every_chance(monkeypatch, garden=None):
+    """The mirror of `no_dice`: every chance-driven urge fires. Used where the
+    test is about what happens when a roach takes an option, not about how
+    often it takes it."""
+    from silphe import calibrate
+    monkeypatch.setattr(calibrate.random, "random", lambda: 0.0)
+    if garden is not None:
+        settle(garden)
 
 
 def solo(garden):
@@ -123,15 +184,10 @@ def put(garden, tg, cell):
 
 
 def bait_beside(garden, tg):
-    """Drop a crumb and stand a calm roach next to it. Returns the crumb cell.
-
-    The bursts are cleared deliberately: the round's opening tick has the
-    cursor parked mid-canvas, which startles whatever it lands near, and that
-    scare is half a second of wall-clock — an eternity to a test loop running
-    at machine speed. A test about appetite starts from an unstartled roach.
-    """
-    garden.last = (-500, -500)                             # nobody looming over it
-    tg["burst_until"], tg["pause_until"], tg["want_hide"] = 0.0, 0.0, False
+    """Drop a crumb and stand the roach next to it, with nothing looming over
+    it. Returns the crumb cell. Callers `settle` first — an appetite is no
+    match for a scare."""
+    garden.last = (-500, -500)
     garden._drop_bait(time.perf_counter())
     crumb = next(iter(garden.baits))
     put(garden, tg, garden._neighbors(crumb)[0])
@@ -162,7 +218,7 @@ def test_round_opens_on_a_connected_maze_with_a_brood(garden):
 
 
 def test_every_roach_runs_its_own_evasion_without_walking_through_walls(garden, monkeypatch):
-    no_dice(monkeypatch)                                   # no idle pauses to freeze one mid-test
+    no_dice(monkeypatch, garden)                                   # no idle pauses to freeze one mid-test
     ground = open_cells(garden.walls, garden.ROWS, garden.COLS)
     visited = {tg["id"]: set() for tg in garden.roaches}
     for _ in range(120):
@@ -224,6 +280,7 @@ def test_path_follows_whichever_roach_the_player_is_chasing(garden):
     player's attention — not some roach nobody was looking at."""
     run(garden, frames=10)
     freeze(garden)
+    stand_apart(garden)
     first, second = garden.roaches[0], garden.roaches[1]
 
     garden.last = (first["px"], first["py"])               # cursor sits on the first
@@ -240,6 +297,7 @@ def test_path_follows_whichever_roach_the_player_is_chasing(garden):
 def test_target_switches_are_recorded_but_not_flapped(garden):
     run(garden, frames=10)
     freeze(garden)
+    stand_apart(garden)
     first, second = garden.roaches[0], garden.roaches[1]
 
     garden.last = (first["px"], first["py"])
@@ -260,6 +318,7 @@ def test_target_switches_are_recorded_but_not_flapped(garden):
 def test_killing_the_engaged_roach_re_homes_onto_what_is_left(garden):
     run(garden, frames=10)
     freeze(garden)
+    stand_apart(garden)
     first = garden.roaches[0]
     garden.last = (first["px"], first["py"])
     run(garden, frames=3)
@@ -292,6 +351,7 @@ def test_a_burnt_out_hide_hole_goes_back_to_the_maze_not_the_garden(garden):
 def test_the_swatter_lands_on_the_nearest_roach(garden):
     run(garden, frames=20)
     freeze(garden)
+    stand_apart(garden)
     near, far = garden.roaches[0], garden.roaches[1]
     for tg in garden.roaches:
         tg["health"] = 5
@@ -315,7 +375,7 @@ def test_a_crumb_lands_on_ground_the_roaches_can_reach(garden):
 def test_a_crumb_pulls_a_roach_off_its_run_and_puts_its_head_down(garden, monkeypatch):
     """The whole point: a baited roach and a bolting one are different things
     to chase, and the baited one holds still long enough to be hit."""
-    no_dice(monkeypatch)
+    no_dice(monkeypatch, garden)
     tg = solo(garden)
     crumb = bait_beside(garden, tg)
 
@@ -334,7 +394,7 @@ def test_a_crumb_pulls_a_roach_off_its_run_and_puts_its_head_down(garden, monkey
 
 
 def test_finishing_the_crumb_consumes_it_and_logs_who_ate_it(garden, monkeypatch):
-    no_dice(monkeypatch)
+    no_dice(monkeypatch, garden)
     tg = solo(garden)
     crumb = bait_beside(garden, tg)
     assert feed(garden, tg)
@@ -349,7 +409,7 @@ def test_finishing_the_crumb_consumes_it_and_logs_who_ate_it(garden, monkeypatch
 def test_a_scare_beats_an_appetite(garden, monkeypatch):
     """Threat overrides food, and the crumb it abandons is still there for
     whoever comes along next."""
-    no_dice(monkeypatch)
+    no_dice(monkeypatch, garden)
     tg = solo(garden)
     crumb = bait_beside(garden, tg)
     run(garden, frames=1)
@@ -362,7 +422,7 @@ def test_a_scare_beats_an_appetite(garden, monkeypatch):
 
 
 def test_swatting_a_roach_mid_meal_leaves_the_crumb(garden, monkeypatch):
-    no_dice(monkeypatch)
+    no_dice(monkeypatch, garden)
     tg = solo(garden)
     crumb = bait_beside(garden, tg)
     assert feed(garden, tg)
@@ -373,7 +433,7 @@ def test_swatting_a_roach_mid_meal_leaves_the_crumb(garden, monkeypatch):
 
 
 def test_the_record_carries_the_crumbs_and_each_roach_mode_timeline(garden, monkeypatch):
-    no_dice(monkeypatch)
+    no_dice(monkeypatch, garden)
     tg = solo(garden)
     bait_beside(garden, tg)
     assert feed(garden, tg)
@@ -386,6 +446,95 @@ def test_the_record_carries_the_crumbs_and_each_roach_mode_timeline(garden, monk
     assert "baited" in modes and "feeding" in modes, \
         "analysis has to be able to segment the chase by the roach's mode"
     assert row["schema_version"] == 1
+
+
+def test_tunnel_mouths_are_paired_and_keep_their_own_cells(garden):
+    mouths = garden.tunnels
+    assert len(mouths) == garden.TUNNEL_PAIRS * 2
+    ground = open_cells(garden.walls, garden.ROWS, garden.COLS)
+    span = (garden.ROWS + garden.COLS) // 2
+    for mouth, far in mouths.items():
+        assert mouths[far] == mouth, "a tunnel must run both ways"
+        assert mouth in ground and mouth not in garden.hides
+        assert abs(mouth[0] - far[0]) + abs(mouth[1] - far[1]) >= span, \
+            "a tunnel that surfaces next door is just a shortcut"
+    assert not (set(mouths) & {tg["cell"] for tg in garden.roaches}), \
+        "nothing starts standing on a tunnel mouth"
+
+
+def test_a_bolting_roach_drops_into_a_tunnel(garden, monkeypatch):
+    every_chance(monkeypatch, garden)
+    tg = solo(garden)
+    mouth = next(iter(garden.tunnels))
+    put(garden, tg, mouth)
+    tg["burst_until"] = time.perf_counter() + 5.0          # bolting over the hole
+
+    run(garden, frames=1)
+    assert tg["under"] and tg["tunnel_exit"] == garden.tunnels[mouth]
+    assert tg["mode"] == "tunnelling", "a tunnel is not a hide-hole"
+    assert tg["tunnels"][-1]["from"] == list(mouth)
+    assert tg["tunnels"][-1]["out"] is None, "still down there"
+    # The trip has to last long enough to actually lose it.
+    assert 0.4 <= garden.TUNNEL_SECS[0] <= garden.TUNNEL_SECS[1]
+    assert tg["tunnel_until"] - time.perf_counter() >= garden.TUNNEL_SECS[0] - 0.1
+
+
+def test_a_roach_in_the_tunnels_is_off_the_field(garden, monkeypatch):
+    """It cannot be seen and it cannot be hit — that is what makes the player
+    have to find it again."""
+    no_dice(monkeypatch, garden)
+    tg = solo(garden)
+    put(garden, tg, next(iter(garden.tunnels)))
+    garden._dive(tg, time.perf_counter())
+    tg["tunnel_until"] = time.perf_counter() + 60.0        # a long trip
+    run(garden, frames=3)
+
+    assert tg["mode"] == "tunnelling"
+    assert not garden.canvas.find_withtag("roach"), "an underground roach is drawn"
+    before = tg["health"]
+    garden.tool = "swatter"
+    garden._click_evasive(Click(tg["px"], tg["py"]))
+    assert tg["health"] == before, "a swat reached into the tunnels"
+
+
+def test_it_surfaces_at_the_far_end_already_running(garden, monkeypatch):
+    no_dice(monkeypatch, garden)
+    tg = solo(garden)
+    mouth = next(iter(garden.tunnels))
+    far = garden.tunnels[mouth]
+    put(garden, tg, mouth)
+    garden._dive(tg, time.perf_counter())
+
+    tg["tunnel_until"] = time.perf_counter() - 0.01        # the trip is over
+    run(garden, frames=1)
+    assert not tg["under"] and tg["cell"] == far
+    assert (tg["px"], tg["py"]) == garden._center(*far)
+    assert tg["burst_until"] > time.perf_counter(), "it should come out at a bolt"
+
+
+def test_the_trip_records_both_ends_and_both_timestamps(garden, monkeypatch):
+    """The disappear/reappear stamps are what let analysis find the
+    re-acquisition in the cursor trace."""
+    no_dice(monkeypatch, garden)
+    tg = solo(garden)
+    mouth = next(iter(garden.tunnels))
+    far = garden.tunnels[mouth]
+    put(garden, tg, mouth)
+    garden._dive(tg, time.perf_counter())
+    tg["tunnel_until"] = time.perf_counter() - 0.01
+    run(garden, frames=1)
+
+    trip = tg["tunnels"][-1]
+    assert trip["from"] == list(mouth) and trip["to"] == list(far)
+    # Not strictly greater: this test drives both ends inside one tenth of a
+    # millisecond. How long a real trip lasts is TUNNEL_SECS, pinned below.
+    assert trip["out"] >= trip["in"] >= 0, "it must surface no sooner than it dives"
+
+    swat(garden, tg)
+    garden.recorder.close()
+    row = json.loads(open(garden.recorder.path, encoding="utf-8").readline())
+    assert row["roaches"][0]["tunnels"] == [trip]
+    assert "tunnelling" in [m for _, m in row["roaches"][0]["modes"]]
 
 
 def test_next_round_puts_the_garden_back(garden):
