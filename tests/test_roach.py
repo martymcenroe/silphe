@@ -52,6 +52,15 @@ def test_ambling_roach_turns_around_at_a_dead_end():
     assert field._wander((1, 3), 0, 0, False, came_from=(1, 2)) == (1, 2)
 
 
+def test_a_poisoned_roach_staggers_instead_of_running_the_corridor():
+    """Momentum is the first thing the poison takes: it stops holding a line
+    and reels between both ends of the corridor."""
+    field = corridor()
+    picks = {field._wander((1, 2), 0, 0, False, came_from=(1, 1), sick=True)
+             for _ in range(40)}
+    assert picks == {(1, 1), (1, 3)}, "a dying roach should lose the thread"
+
+
 def test_bolting_roach_doubles_back_when_you_cut_it_off():
     """Fleeing overrides momentum: with the cursor ahead of it, the roach
     reverses past you rather than running into the swatter."""

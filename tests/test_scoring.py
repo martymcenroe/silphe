@@ -64,6 +64,14 @@ def test_make_plan_covers_basics_before_first_evasive():
         assert sorted(plan[:3]) == ["acquire", "hold", "track"]
 
 
+def test_evasive_pays_only_for_the_players_own_swats():
+    """Poison and the gecko take roaches too, and neither is the player's
+    work — but a record written before either existed still scores the same."""
+    assert round_score({"kind": "evasive", "hits": 8, "player_hits": 3}) == 75
+    assert round_score({"kind": "evasive", "hits": 8, "player_hits": 0}) == 0
+    assert round_score({"kind": "evasive", "hits": 8}) == 200
+
+
 def test_difficulties_are_well_formed():
     from silphe.calibrate import DIFFICULTIES
     assert set(DIFFICULTIES) == {"easy", "normal", "hard"}

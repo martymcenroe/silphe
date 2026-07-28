@@ -70,16 +70,37 @@ the round runs until every roach is down.
 | Key | Meaning |
 |---|---|
 | `path` | `[[t, x, y], ...]` — the trace of the roach being pursued (see below) |
-| `hits` | total hits to kill them all |
+| `hits` | the brood's total health: what it would take to kill them all |
+| `player_hits` | blows the player actually landed — what the round scores on |
 | `switches` | `[[t, tool], ...]` — tool switches |
 | `target_switches` | `[[t, roach_id], ...]` — when the player's attention moved to another roach |
-| `roaches` | `[{id, hp0, path, modes, tunnels}, ...]` — every roach's own trace, starting health, mode timeline and tunnel trips |
-| `bait` | `[{cell, spawned, eaten, by}, ...]` — each crumb, when it appeared and which roach finished it (`eaten`/`by` are `null` if it survived the round) |
+| `roaches` | `[{id, hp0, path, modes, tunnels, sickened_at, died}, ...]` — see below |
+| `bait` | `[{cell, spawned, poison, kind, eaten, by}, ...]` — each piece of food, when it appeared and which roach finished it (`eaten`/`by` are `null` if it survived the round) |
+| `gecko` | `{arrived, path, kills}` — the predator's own trace, or `null` if none showed up |
+
+`hits` and `player_hits` diverge once something other than the player can kill
+a roach: poison and the gecko both take roaches, and neither is the player's
+work, so only `player_hits` pays. In a record written before either existed the
+two are the same number, and scoring falls back to `hits` when `player_hits` is
+absent.
+
+`bait` covers crumbs and corpses alike — `kind` is `"crumb"` or `"corpse"`, and
+`poison` says whether eating it is fatal. A poisoned roach dies where it falls
+and its body becomes poisoned bait in turn, so the domino runs through roaches
+that never touched the original crumb.
+
+Per roach: `sickened_at` is when the poison took hold (`null` if it never did),
+and `died` is `{t, cause}` with cause `"swat"`, `"poison"` or `"gecko"` —
+`null` for a roach still alive when the round was abandoned.
+
+`gecko.path` is a machine chasing machines, recorded in the same shape as a
+cursor trace, which makes it a movement sample no human hand produced.
 | `maze` | `["#####", "#...#", ...]` — the round's field, one string per grid row, `#` wall and `.` open |
 
 `roaches[*].modes` is a list of `[t, mode]` transitions — `wander`, `fleeing`,
 `baited`, `feeding`, `hidden`, `tunnelling` — so a chase can be segmented by
-what the roach was doing rather than treated as one behaviour.
+what the roach was doing rather than treated as one behaviour. `fleeing` means
+fleeing the nearer of the two dangers: the player's hand, or the gecko.
 
 `roaches[*].tunnels` is a list of `{in, from, out, to}` trips: when the roach
 dropped into a tunnel mouth and where, and when it surfaced and where. Between

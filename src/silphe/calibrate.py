@@ -11,9 +11,12 @@ GitHub-contribution-graph field of squares:
   EVASIVE  — "Andvari": the garden reconfigures into a maze (green = walls) and
              a brood of roaches runs its corridors, ducking under silver
              hide-cells in the blind alleys (they pulse red) and dropping into
-             dark tunnels that surface halfway across the field; crumbs pull
-             them off the run and hold them still while they eat; thump them,
-             several hits each, until the last one is down
+             dark tunnels that surface halfway across the field. Gold crumbs
+             hold them still while they eat; purple ones are laced, and a
+             poisoned roach staggers, dies, and leaves a body the next one
+             eats. A gecko turns up late and hunts them too — it scores
+             nothing for you. Thump them, several hits each, until the last
+             one is down.
 
 Everything stays on your machine (see silphe.analysis.recordings_dir). Each
 record is stamped with device + OS + player. ESC quits; progress is saved as
@@ -125,7 +128,11 @@ def round_score(obj: dict) -> int:
     if kind == "hold":
         return 100
     if kind == "evasive":
-        return 25 * int(obj.get("hits", 0))
+        # Only the player's own swats pay. Poison and the gecko take roaches
+        # too, and those are not the player's work. Records written before
+        # anything else could kill a roach have no `player_hits`, and for them
+        # `hits` is the same number.
+        return 25 * int(obj.get("player_hits", obj.get("hits", 0)))
     return 0
 
 
@@ -233,6 +240,22 @@ class Garden:
     TUNNEL_SECS = (0.6, 1.2)
     TUNNEL_ODDS = 0.7
 
+    # Poison, and the domino it starts. A roach that finishes a poisoned crumb
+    # sickens, slows, staggers and dies — and its corpse is itself poisoned
+    # bait, so the next roach to eat it goes the same way. That horizontal
+    # transfer is the whole trick of a real gel bait like Advion.
+    POISON_ODDS = 0.4
+    SICK_SPEED = 0.55
+    SICK_SECS = (3.0, 6.0)
+
+    # The gecko. Ambient hazard and theatre — it hunts the same roaches and
+    # they run from it as they run from you, but only your own swats score.
+    # Its pursuit is also a robot chasing a robot, which is a movement sample
+    # no human hand produced.
+    GECKO_AFTER = 6.0
+    GECKO_SPEED = 7.0
+    GECKO_REACH = 12.0
+
     def __init__(self, root: tk.Tk, device: str = "mouse", player: str | None = None,
                  difficulty: str | None = None):
         self.root = root
@@ -272,6 +295,7 @@ class Garden:
         self.baits, self.bait_log = {}, []
         self.next_bait = 0.0
         self.tunnels = {}
+        self.gecko = None
         self.tool = "swatter"
         self.tool_switches = []
         self.target_switches = []
@@ -476,8 +500,9 @@ class Garden:
         self.engaged = None
         self.baits = {}
         self.tunnels = {}
+        self.gecko = None
         self.canvas.delete("mark", "ring", "dot", "roach", "tool", "toast",
-                           "hitmark", "bait", "tunnel")
+                           "hitmark", "bait", "tunnel", "gecko")
 
     def _next(self):
         self._restore()
@@ -519,11 +544,17 @@ class Garden:
         chasing something bolting from you are also different measurements."""
         self._save({"kind": "evasive",
                     "hits": sum(tg["hp0"] for tg in self.roaches),
+                    "player_hits": self.hit_n,
                     "switches": self.tool_switches,
                     "target_switches": self.target_switches,
                     "bait": self.bait_log,
+                    "gecko": None if self.gecko is None else
+                             {"arrived": self.gecko["arrived"],
+                              "path": self.gecko["path"],
+                              "kills": self.gecko["kills"]},
                     "roaches": [{"id": tg["id"], "hp0": tg["hp0"], "path": tg["path"],
-                                 "modes": tg["modes"], "tunnels": tg["tunnels"]}
+                                 "modes": tg["modes"], "tunnels": tg["tunnels"],
+                                 "sickened_at": tg["sickened_at"], "died": tg["died"]}
                                 for tg in self.roaches],
                     "reaction_s": round(self.first_move or 0, 4),
                     "path": self.path, "samples": self.samples,
@@ -691,10 +722,11 @@ class Garden:
         self.path, self.hit_n = [], 0
         self.baits, self.bait_log = {}, []
         self.next_bait = now + random.uniform(*self.BAIT_EVERY)
+        self.gecko = None
         quarry = "the roach" if count == 1 else f"all {count} roaches"
         self._hud(f"ANDVARI — hunt {quarry}.", "#d29922",
-                  sub="SWATTER for a runner, T for the PICK; crumbs pull them off the "
-                      "run, dark holes are tunnels — it comes up somewhere else")
+                  sub="SWATTER for a runner, T for the PICK; gold crumbs feed them and "
+                      "purple ones kill them, dark holes come up somewhere else")
         self.state = "evasive"
         self._show_tool()
         self._roach_tick()
@@ -710,7 +742,8 @@ class Garden:
                 "pause_until": 0.0, "want_hide": False, "last": now,
                 "bait_cell": None, "feed_until": 0.0, "mode": None, "modes": [],
                 "under": False, "tunnel_until": 0.0, "tunnel_exit": None,
-                "tunnels": [], "path": [], "dead": False}
+                "tunnels": [], "path": [], "dead": False,
+                "sick": False, "sickened_at": None, "dies_at": 0.0, "died": None}
 
     def _live(self):
         return [tg for tg in self.roaches if not tg["dead"]]
@@ -739,10 +772,14 @@ class Garden:
                 out.append(nb)
         return out
 
-    def _wander(self, rc, mx, my, fleeing, came_from=None):
+    def _wander(self, rc, mx, my, fleeing, came_from=None, sick=False):
         nb = self._neighbors(rc)
         if not nb:
             return rc
+        if sick:
+            # Poisoned: it staggers. No sense of direction left, not even
+            # enough to keep running the way it was already going.
+            return random.choice(nb)
         if fleeing:
             # Bolting, it takes whatever puts the most floor between it and the
             # cursor — including straight back past you when you've cut it off.
@@ -829,6 +866,90 @@ class Garden:
             self.target_switches.append((round(now - self.t0, 4), pick["id"]))
         return pick
 
+    # ---- the gecko ------------------------------------------------------
+
+    def _threat(self, mx, my, tg):
+        """What this roach is running from — the hand, or the gecko if the
+        gecko is closer. A roach does not care which of you means it harm."""
+        if self.gecko is None:
+            return mx, my
+        gx, gy = self.gecko["px"], self.gecko["py"]
+        if (math.hypot(gx - tg["px"], gy - tg["py"])
+                < math.hypot(mx - tg["px"], my - tg["py"])):
+            return gx, gy
+        return mx, my
+
+    def _hatch_gecko(self, now, live):
+        """It comes in from the far side of the field, so the round has been
+        the player's alone up to here."""
+        ground = [rc for rc in self.cells if rc not in self.walls]
+        if not ground:
+            return
+        far = max(ground, key=lambda rc: min(abs(rc[0] - tg["cell"][0])
+                                             + abs(rc[1] - tg["cell"][1]) for tg in live))
+        cx, cy = self._center(*far)
+        self.gecko = {"cell": far, "to": far, "from": None, "prog": 1.0,
+                      "px": cx, "py": cy, "heading": (cx, cy, cx, cy),
+                      "last": now, "path": [], "kills": [],
+                      "arrived": round(now - self.t0, 4)}
+        self._toast(far, "a gecko!", False)
+
+    def _gecko_tick(self, now):
+        live = self._live()
+        if not live:
+            return
+        if self.gecko is None:
+            if now - self.t0 >= self.GECKO_AFTER:
+                self._hatch_gecko(now, live)
+            return
+        g = self.gecko
+        dt = now - g["last"]
+        g["last"] = now
+        g["prog"] += self.GECKO_SPEED * dt
+        if g["prog"] >= 1.0:
+            g["prog"], g["from"], g["cell"] = 0.0, g["cell"], g["to"]
+            prey = min(live, key=lambda tg: abs(tg["cell"][0] - g["cell"][0])
+                       + abs(tg["cell"][1] - g["cell"][1]))
+            g["to"] = (self._toward(g["cell"], prey["cell"])
+                       or self._wander(g["cell"], g["px"], g["py"], False, g["from"]))
+        ax, ay = self._center(*g["cell"])
+        bx, by = self._center(*g["to"])
+        g["px"] = ax + (bx - ax) * g["prog"]
+        g["py"] = ay + (by - ay) * g["prog"]
+        g["heading"] = (ax, ay, bx, by)
+        g["path"].append((round(now - self.t0, 4), round(g["px"], 1), round(g["py"], 1)))
+        for tg in live:
+            if tg["hidden"] or tg["under"]:
+                continue                                   # it cannot reach down a hole either
+            if math.hypot(g["px"] - tg["px"], g["py"] - tg["py"]) <= self.GECKO_REACH:
+                g["kills"].append((round(now - self.t0, 4), tg["id"]))
+                self._toast(tg["cell"], "the gecko got one", False)
+                self._roach_down(tg, now, "gecko")
+                break
+
+    def _draw_gecko(self):
+        self.canvas.delete("gecko")
+        g = self.gecko
+        if g is None:
+            return
+        ax, ay, bx, by = g["heading"]
+        ang = math.atan2(by - ay, bx - ax) if (bx != ax or by != ay) else 0.0
+        dx, dy = math.cos(ang), math.sin(ang)
+        px, py = -dy, dx
+        x, y = g["px"], g["py"]
+        self.canvas.create_line(x - dx * 7, y - dy * 7, x - dx * 21, y - dy * 21,
+                                fill="#39c5cf", width=3, tag="gecko")
+        for side in (1, -1):
+            for along in (0.6, -0.6):
+                bx0, by0 = x + dx * along * 7, y + dy * along * 7
+                self.canvas.create_line(bx0, by0, bx0 + px * side * 9, by0 + py * side * 9,
+                                        fill="#164e52", width=2, tag="gecko")
+        self.canvas.create_oval(x - 10, y - 6, x + 10, y + 6, fill="#39c5cf",
+                                outline="#164e52", tag="gecko")
+        hx, hy = x + dx * 10, y + dy * 10
+        self.canvas.create_oval(hx - 5, hy - 4, hx + 5, hy + 4, fill="#39c5cf",
+                                outline="#164e52", tag="gecko")
+
     # ---- tunnels --------------------------------------------------------
 
     def _draw_tunnel(self, rc):
@@ -866,18 +987,38 @@ class Garden:
 
     def _drop_bait(self, now):
         """Scatter a crumb somewhere the roaches can get to and nobody is
-        standing."""
+        standing. Some of it is laced."""
         taken = (set(self.baits) | self.hides | set(self.tunnels)
                  | {tg["cell"] for tg in self._live()})
         ground = [rc for rc in self.cells if rc not in self.walls and rc not in taken]
         if not ground:
             return
         rc = random.choice(ground)
+        poison = random.random() < self.POISON_ODDS
         cx, cy = self._center(*rc)
-        self.baits[rc] = self.canvas.create_oval(cx - 4, cy - 4, cx + 4, cy + 4,
-                                                 fill="#d29922", outline="#8b6914",
-                                                 tag="bait")
+        item = self.canvas.create_oval(
+            cx - 4, cy - 4, cx + 4, cy + 4, tag="bait",
+            fill="#a371f7" if poison else "#d29922",
+            outline="#553098" if poison else "#8b6914")
+        self.baits[rc] = {"item": item, "poison": poison, "kind": "crumb"}
         self.bait_log.append({"cell": list(rc), "spawned": round(now - self.t0, 4),
+                              "poison": poison, "kind": "crumb",
+                              "eaten": None, "by": None})
+
+    def _leave_corpse(self, tg, now):
+        """A poisoned roach leaves a poisoned meal behind. Whatever eats it
+        next goes the same way — that is the domino, and it is why a gel bait
+        reaches roaches that never touched the bait."""
+        rc = tg["cell"]
+        if rc in self.baits or rc in self.walls:
+            return
+        cx, cy = self._center(*rc)
+        item = self.canvas.create_oval(cx - 7, cy - 5, cx + 7, cy + 5,
+                                       fill="#6e4b1f", outline="#a371f7", width=2,
+                                       tag="bait")
+        self.baits[rc] = {"item": item, "poison": True, "kind": "corpse"}
+        self.bait_log.append({"cell": list(rc), "spawned": round(now - self.t0, 4),
+                              "poison": True, "kind": "corpse",
                               "eaten": None, "by": None})
 
     def _lure(self, tg):
@@ -893,17 +1034,30 @@ class Garden:
         return near if gap <= self.BAIT_RANGE else None
 
     def _eat_bait(self, tg, now):
-        """It finishes the crumb. Swat it mid-meal and the crumb survives for
+        """It finishes the meal. Swat it mid-mouthful and the food survives for
         whoever comes along next."""
         rc = tg["bait_cell"]
         tg["bait_cell"], tg["feed_until"] = None, 0.0
-        item = self.baits.pop(rc, None)
-        if item is not None:
-            self.canvas.delete(item)
+        food = self.baits.pop(rc, None)
+        if food is None:
+            return
+        self.canvas.delete(food["item"])
         for entry in self.bait_log:
             if tuple(entry["cell"]) == rc and entry["eaten"] is None:
                 entry["eaten"], entry["by"] = round(now - self.t0, 4), tg["id"]
                 break
+        if food["poison"]:
+            self._sicken(tg, now)
+
+    def _sicken(self, tg, now):
+        """It has taken the poison. Slower, staggering, and on a clock."""
+        if tg["sick"]:
+            return
+        tg["sick"] = True
+        tg["sickened_at"] = round(now - self.t0, 4)
+        tg["speed"] *= self.SICK_SPEED
+        tg["dies_at"] = now + random.uniform(*self.SICK_SECS)
+        self._toast(tg["cell"], "poisoned", False)
 
     def _set_mode(self, tg, mode, now):
         """A roach's mode timeline, so analysis can segment the chase: pursuing
@@ -924,11 +1078,15 @@ class Garden:
             self.next_bait = now + random.uniform(*self.BAIT_EVERY)
         for tg in self._live():
             self._advance(tg, now, mx, my)
+        self._gecko_tick(now)
         quarry = self._quarry(now, mx, my)
         if quarry is not None:
             self.path.append((round(now - self.t0, 4),
                               round(quarry["px"], 1), round(quarry["py"], 1)))
         self._draw_roaches()
+        self._draw_gecko()
+        if not self._live():                               # poison or the gecko finished it
+            return self._finish_evasive()
         self.root.after(16, self._roach_tick)
 
     def _advance(self, tg, now, mx, my):
@@ -940,11 +1098,14 @@ class Garden:
                 self._set_mode(tg, "tunnelling", now)
                 return
             self._surface(tg, now)
+        if tg["sick"] and now >= tg["dies_at"]:            # the poison finishes it
+            return self._roach_down(tg, now, "poison")
         if tg["hidden"]:            # lurks under the silver cell — pulses, won't leave on its own
             self._set_mode(tg, "hidden", now)
             self.canvas.itemconfig(self.cells[tg["hide_cell"]],
                                    fill="#f85149" if (now * 4) % 2 < 1 else "#b1bac4")
             return
+        mx, my = self._threat(mx, my, tg)                  # the hand, or the gecko
         fleeing = now < tg["burst_until"]
         if fleeing and tg["bait_cell"] is not None:
             tg["bait_cell"], tg["feed_until"] = None, 0.0   # a scare beats an appetite
@@ -983,14 +1144,14 @@ class Garden:
                     tg["to"] = tg["cell"]
                 else:
                     tg["to"] = (self._toward(tg["cell"], crumb)
-                                or self._wander(tg["cell"], mx, my, False, tg["from"]))
+                                or self._wander(tg["cell"], mx, my, False, tg["from"], tg["sick"]))
             elif tg["want_hide"]:
                 tg["to"] = (self._toward(tg["cell"], self._nearest_hide(tg["cell"]))
-                            or self._wander(tg["cell"], mx, my, True, tg["from"]))
+                            or self._wander(tg["cell"], mx, my, True, tg["from"], tg["sick"]))
             else:
                 if random.random() < 0.02:
                     tg["pause_until"] = now + random.uniform(0.1, 0.3)
-                tg["to"] = self._wander(tg["cell"], mx, my, fleeing, tg["from"])
+                tg["to"] = self._wander(tg["cell"], mx, my, fleeing, tg["from"], tg["sick"])
         ax, ay = self._center(*tg["cell"])
         bx, by = self._center(*tg["to"])
         tg["px"] = ax + (bx - ax) * tg["prog"]
@@ -1060,6 +1221,25 @@ class Garden:
             return self._wound(tg, e, "STABBED it!")
         self._toast_xy(e.x, e.y, "missed — it bolted out", False)
 
+    def _roach_down(self, tg, now, cause):
+        """One roach out of the round, however it went — swatted, poisoned, or
+        taken by the gecko."""
+        tg["dead"] = True
+        tg["died"] = {"t": round(now - self.t0, 4), "cause": cause}
+        if tg["id"] == self.engaged:
+            self.engaged = None                           # re-home onto whatever is left
+        if cause == "poison":
+            self._leave_corpse(tg, now)
+
+    def _finish_evasive(self):
+        if self.state != "evasive":
+            return
+        self._save_evasive()
+        self.canvas.delete("roach", "gecko")
+        self.state = "idle"
+        self.i += 1
+        self.root.after(800, self._next)
+
     def _wound(self, tg, e, text):
         tg["health"] -= 1
         tg["speed"] *= 0.88                               # wounded wood roach slows down
@@ -1067,18 +1247,12 @@ class Garden:
         self._hit_mark(e.x, e.y, self.hit_n)
         if tg["health"] > 0:
             return self._toast_xy(e.x, e.y, text, True)
-        tg["dead"] = True
-        if tg["id"] == self.engaged:
-            self.engaged = None                           # re-home onto whatever is left
+        self._roach_down(tg, time.perf_counter(), "swat")
         left = len(self._live())
         if left:
             return self._toast_xy(e.x, e.y, f"SQUASHED — {left} to go", True)
-        self._save_evasive()
-        self.canvas.delete("roach")
         self._toast_xy(e.x, e.y, "SQUASHED", True)
-        self.state = "idle"
-        self.i += 1
-        self.root.after(800, self._next)
+        self._finish_evasive()
 
     # ---- end ------------------------------------------------------------
 
