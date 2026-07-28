@@ -69,6 +69,14 @@ therefore versioned and frozen:
 | `path` | `[[t, x, y], ...]` — the roach's trace |
 | `hits` | total hits to kill it |
 | `switches` | `[[t, tool], ...]` — tool switches |
+| `maze` | `["#####", "#...#", ...]` — the round's field, one string per grid row, `#` wall and `.` open |
+
+The `maze` field (added #43) is what lets analysis separate *anticipating a
+corner* from *reacting in the open* — the same chase over a corridor and over a
+chamber are different measurements, and the trace alone cannot tell them apart.
+Rows are top-to-bottom and characters left-to-right over the same grid the
+`samples` coordinates fall on; `silphe.maze.render` produces it and
+`silphe.maze.generate` guarantees every open cell is reachable from every other.
 
 ## Privacy
 
