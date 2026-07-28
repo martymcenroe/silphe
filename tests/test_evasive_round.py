@@ -194,6 +194,45 @@ def bait_beside(garden, tg):
     return crumb
 
 
+def lace(garden, cell):
+    """Poison the crumb on *cell*. Whether a crumb is laced in the first place
+    is a dice roll, tested on its own; these tests are about what the poison
+    then does."""
+    garden.baits[cell]["poison"] = True
+    for entry in garden.bait_log:
+        if tuple(entry["cell"]) == cell and entry["eaten"] is None:
+            entry["poison"] = True
+
+
+def poison(garden, tg):
+    """Feed *tg* a laced crumb and let it finish the meal. Returns once the
+    roach is sick."""
+    crumb = bait_beside(garden, tg)
+    lace(garden, crumb)
+    assert feed(garden, tg), "it never settled down to eat"
+    tg["feed_until"] = time.perf_counter() - 0.01
+    run(garden, frames=1)
+    assert tg["sick"], "it ate the poison and shrugged it off"
+
+
+def summon_gecko(garden):
+    """Wind the round's clock forward until the gecko turns up."""
+    garden.t0 -= garden.GECKO_AFTER + 1.0
+    run(garden, frames=1)
+    assert garden.gecko is not None, "the gecko never arrived"
+    return garden.gecko
+
+
+def stalk(garden, tg):
+    """Stand the gecko and *tg* on the same cell, mid-stride, so the next tick
+    resolves the catch."""
+    gecko = garden.gecko
+    put(garden, tg, gecko["cell"])
+    gecko["to"], gecko["prog"] = gecko["cell"], 0.0
+    gecko["last"] = time.perf_counter()
+    garden._gecko_tick(time.perf_counter())
+
+
 def feed(garden, tg, frames=40):
     """Run until the roach has its head down in a crumb."""
     for _ in range(frames):
@@ -535,6 +574,163 @@ def test_the_trip_records_both_ends_and_both_timestamps(garden, monkeypatch):
     row = json.loads(open(garden.recorder.path, encoding="utf-8").readline())
     assert row["roaches"][0]["tunnels"] == [trip]
     assert "tunnelling" in [m for _, m in row["roaches"][0]["modes"]]
+
+
+def test_whether_a_crumb_is_laced_follows_the_odds(garden, monkeypatch):
+    every_chance(monkeypatch, garden)
+    garden._drop_bait(time.perf_counter())
+    assert all(food["poison"] for food in garden.baits.values())
+    assert garden.bait_log[-1]["poison"] is True
+
+    garden.baits.clear()
+    no_dice(monkeypatch, garden)
+    garden._drop_bait(time.perf_counter())
+    assert not any(food["poison"] for food in garden.baits.values())
+    assert garden.bait_log[-1]["poison"] is False
+
+
+def test_a_laced_crumb_sickens_the_roach_that_finishes_it(garden, monkeypatch):
+    no_dice(monkeypatch, garden)
+    tg = solo(garden)
+    crumb = bait_beside(garden, tg)
+    lace(garden, crumb)
+    assert feed(garden, tg)
+
+    healthy = tg["speed"]
+    tg["feed_until"] = time.perf_counter() - 0.01          # the last mouthful
+    run(garden, frames=1)
+    assert tg["sick"] and tg["sickened_at"] is not None
+    assert tg["speed"] < healthy, "the poison should slow it"
+    assert tg["dies_at"] > time.perf_counter(), "it dies on a clock, not on the spot"
+    assert not tg["dead"]
+
+
+def test_a_poisoned_roach_dies_where_it_falls_and_leaves_a_laced_corpse(garden, monkeypatch):
+    no_dice(monkeypatch, garden)
+    tg = solo(garden)
+    poison(garden, tg)
+
+    fell = tg["cell"]
+    tg["dies_at"] = time.perf_counter() - 0.01
+    run(garden, frames=1)
+    assert tg["dead"] and tg["died"]["cause"] == "poison"
+    assert fell in garden.baits, "it should leave a body"
+    assert garden.baits[fell]["kind"] == "corpse" and garden.baits[fell]["poison"]
+
+
+def test_the_corpse_carries_the_poison_to_whatever_eats_it(garden, monkeypatch):
+    """The Advion domino: the second roach never touched the bait."""
+    no_dice(monkeypatch, garden)
+    garden.last = (-500, -500)
+    first, second = garden.roaches[0], garden.roaches[1]
+
+    ground = sorted(open_cells(garden.walls, garden.ROWS, garden.COLS))
+    fell = next(rc for rc in ground if rc not in garden.hides
+                and rc not in garden.tunnels and garden._neighbors(rc))
+    put(garden, first, fell)
+    garden._roach_down(first, time.perf_counter(), "poison")
+    assert garden.baits[fell]["kind"] == "corpse"
+
+    put(garden, second, garden._neighbors(fell)[0])
+    assert feed(garden, second), "it never settled down to the corpse"
+    second["feed_until"] = time.perf_counter() - 0.01
+    run(garden, frames=1)
+    assert second["sick"], "the domino did not fall"
+    assert fell not in garden.baits, "the corpse should be eaten"
+
+
+def test_the_gecko_waits_before_it_shows_up(garden, monkeypatch):
+    no_dice(monkeypatch, garden)
+    run(garden, frames=40)
+    assert garden.gecko is None, "the round starts as the player's alone"
+
+    gecko = summon_gecko(garden)
+    assert gecko["cell"] not in garden.walls
+    assert gecko["arrived"] >= garden.GECKO_AFTER
+
+
+def test_the_gecko_takes_a_roach_but_the_player_gets_nothing_for_it(garden, monkeypatch):
+    no_dice(monkeypatch, garden)
+    tg = solo(garden)
+    gecko = summon_gecko(garden)
+    stalk(garden, tg)
+
+    assert tg["dead"] and tg["died"]["cause"] == "gecko"
+    assert [kill[1] for kill in gecko["kills"]] == [tg["id"]]
+    assert garden.hit_n == 0, "the player never landed a blow"
+
+    run(garden, frames=1)                                  # the round notices it is over
+    garden.recorder.close()
+    row = json.loads(open(garden.recorder.path, encoding="utf-8").readline())
+    assert row["player_hits"] == 0 and row["score"] == 0, "the gecko does not score for you"
+    assert row["hits"] == tg["hp0"], "what it would have taken is still recorded"
+    assert row["roaches"][0]["died"]["cause"] == "gecko"
+    assert row["gecko"]["path"] and row["gecko"]["kills"]
+
+
+def test_the_gecko_cannot_reach_down_a_hole(garden, monkeypatch):
+    no_dice(monkeypatch, garden)
+    tg = solo(garden)
+    summon_gecko(garden)
+    tg["hidden"], tg["hide_cell"] = True, garden.gecko["cell"]
+    stalk(garden, tg)
+    assert not tg["dead"], "it got one out of a hide-hole"
+
+    tg["hidden"], tg["under"] = False, True
+    stalk(garden, tg)
+    assert not tg["dead"], "it got one out of the tunnels"
+
+
+def test_a_roach_runs_from_whichever_danger_is_nearer(garden):
+    tg = garden.roaches[0]
+    assert garden._threat(-500.0, -500.0, tg) == (-500.0, -500.0), "no gecko, no question"
+
+    garden.gecko = {"px": tg["px"] + 10.0, "py": tg["py"]}
+    assert garden._threat(-500.0, -500.0, tg) == (tg["px"] + 10.0, tg["py"])
+
+    garden.gecko = {"px": tg["px"] + 900.0, "py": tg["py"]}
+    assert garden._threat(tg["px"] + 5.0, tg["py"], tg) == (tg["px"] + 5.0, tg["py"])
+
+
+def test_a_swatted_roach_is_recorded_as_the_players_work(garden, monkeypatch):
+    no_dice(monkeypatch, garden)
+    tg = solo(garden)
+    swat(garden, tg)
+    assert tg["died"]["cause"] == "swat"
+
+    garden.recorder.close()
+    row = json.loads(open(garden.recorder.path, encoding="utf-8").readline())
+    assert row["player_hits"] == garden.hit_n > 0
+    assert row["score"] > 0
+    assert row["gecko"] is None, "no gecko showed up in this round"
+
+
+def test_the_whole_ecology_runs_without_falling_over(garden):
+    """Brood, crumbs, poison, corpses, hide-holes, tunnels and the gecko, all
+    at once, with the dice left alone. Nothing here is stubbed — this is the
+    guard that the pieces do not break each other."""
+    summon_gecko(garden)
+    ground = open_cells(garden.walls, garden.ROWS, garden.COLS)
+
+    for _ in range(300):
+        garden.next_bait = 0.0                             # keep the food coming
+        if garden.gecko is not None:
+            garden.gecko["last"] -= 0.05                   # and the gecko hunting
+        run(garden, frames=1)
+        if garden.state != "evasive":
+            break
+        for tg in garden._live():
+            assert tg["cell"] in ground and tg["to"] in ground, "a roach left the field"
+        if garden.gecko is not None:
+            assert garden.gecko["cell"] in ground, "the gecko walked into a wall"
+        for cell in garden.baits:
+            assert cell in ground, "food landed inside a wall"
+
+    if garden.state == "idle":                             # the gecko cleaned up
+        garden.recorder.close()
+        row = json.loads(open(garden.recorder.path, encoding="utf-8").readline())
+        assert row["kind"] == "evasive" and row["schema_version"] == 1
+        assert all(tg["died"] for tg in row["roaches"]), "a round ends with none left"
 
 
 def test_next_round_puts_the_garden_back(garden):
