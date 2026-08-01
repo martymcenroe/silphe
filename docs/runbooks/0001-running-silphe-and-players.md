@@ -14,9 +14,13 @@ poetry run silphe-play
 `silphe-play` alone won't work outside the poetry venv — the console scripts
 are installed inside it, so the `poetry run` prefix is required.
 
-**From the release exe** (v0.1.0+): run `silphe-play.exe` from wherever you
-saved the GitHub Release download (or `dist\silphe-play.exe` after a local
-PyInstaller build). Double-click works.
+**From the release exe:** run `silphe-play.exe` from wherever you saved the
+GitHub Release download (or `dist\silphe-play.exe` after a local PyInstaller
+build). Double-click works.
+
+> **The published exe is stale.** It was built 2026-06-11, before the Andvari
+> ecology landed, so it still has the flat random field and a single roach. To
+> see the game as it is now, run from source. A fresh build is #16's job.
 
 **Variants:**
 
@@ -29,16 +33,42 @@ poetry run silphe-play --difficulty hard   # skip the difficulty menu (easy/norm
 ## Difficulty
 
 A CHOOSE DIFFICULTY menu opens at launch unless `--difficulty` is given.
-Difficulty shapes the challenge AND the reward: hold duration, track
-duration and lock tolerance, the roach's health and speed, and a score
-multiplier (easy x1, normal x1.5, hard x2). Each record
-is stamped with the difficulty so analysis can segment by it.
+Difficulty shapes the challenge AND the reward: hold duration, track duration
+and lock tolerance, the roaches' health and speed, **how many roaches are in a
+round** (two on easy, three on normal and hard), and a score multiplier
+(easy x1, normal x1.5, hard x2). Each record is stamped with the difficulty so
+analysis can segment by it.
+
+The roach count is the biggest single difference in how a round feels, and it
+compounds: a hard round is three roaches at six to eight hits each, so clearing
+one takes several times longer than it used to.
 
 ## Round order
 
 Every session (including after a player switch) opens with one of each of
 acquire / track / hold in random order before the Andvari roach round can
 appear — a new player always gets the basics sampled first.
+
+## Reading the Andvari round
+
+When the roach round starts the garden reconfigures into a maze; it goes back
+to its planted scatter when the round ends. What is on the field:
+
+| What you see | What it is |
+|---|---|
+| Green squares | Walls. The roaches run the corridors between them |
+| Silver cells | Hide-holes. A roach ducks under one and it pulses red; only the PICK (`T`) reaches in, and a stab always drives it out but only wounds one time in four |
+| Dark holes | Tunnel mouths. A bolting roach drops in and surfaces at the far one, halfway across the field. It cannot be hit while underground — you have to find where it comes up |
+| Gold dots | Crumbs. A roach nearby breaks off to eat and stands still with its head down, which is your best chance at it |
+| Purple dots | Laced crumbs. Whatever finishes one sickens, slows, staggers and dies |
+| A brown body with a purple outline | A poisoned corpse. It is still poison — the next roach to eat it goes the same way, having never touched the bait |
+| A cyan lizard | The gecko. It turns up a few seconds in and hunts the roaches too. **It is not something to swat**, and the roaches run from whichever is nearer, it or your cursor |
+
+The round runs until the **last** roach is down, not the first.
+
+**Only your own swats score.** Poison and the gecko take roaches as well, and
+neither earns you anything — if the gecko clears the field your score does not
+move. That is deliberate, not a bug.
 
 ## Sound
 
@@ -53,7 +83,7 @@ mute the system volume if needed.
 |---|---|
 | ESC | Pause menu: RESUME / SWITCH PLAYER / QUIT. ESC again while paused quits. (Inactive on the launch difficulty menu.) |
 | P | Switch player by typing a name (blank = default player) |
-| T | Swap swatter/pick during the Andvari (evasive) round |
+| T | Swap swatter/pick during the Andvari (evasive) round. The swatter catches one in the open; the pick is the only thing that reaches into a hide-hole |
 
 Pausing abandons the round in progress (no partial record); RESUME replays it.
 Progress is saved round-by-round, so quitting mid-sequence loses nothing
