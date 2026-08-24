@@ -26,9 +26,27 @@ build). Double-click works.
 
 ```
 poetry run silphe-play trackpad            # tag the session as trackpad instead of mouse
-poetry run silphe-play --player Rebecca    # start directly as a named player
+poetry run silphe-play --player Rebecca    # skip the player menu, start as a named player
 poetry run silphe-play --difficulty hard   # skip the difficulty menu (easy/normal/hard)
 ```
+
+## What launch asks you
+
+Two menus, in this order, and each is skipped by the matching flag:
+
+1. **WHO'S PLAYING?** — everyone who has played on this machine, plus
+   `NEW PLAYER...` to type a name and `PLAY AS DEFAULT` to record as nobody in
+   particular. Skipped by `--player NAME`.
+2. **CHOOSE DIFFICULTY** — easy / normal / hard. Skipped by `--difficulty`.
+
+ESC does nothing on either one; there is no round yet to pause or abandon.
+
+Answering the first menu matters more than it looks. Every record is stamped
+with the player name and each player writes into their own
+`recordings-<name>` directory, so a session played as the default is a session
+filed under nobody. Switching player later does not move it: that closes the
+session file and starts a fresh plan and score, leaving the rounds already
+played behind under `default`.
 
 ## Difficulty
 
@@ -81,9 +99,12 @@ mute the system volume if needed.
 
 | Key | Effect |
 |---|---|
-| ESC | Pause menu: RESUME / SWITCH PLAYER / QUIT. ESC again while paused quits. (Inactive on the launch difficulty menu.) |
+| ESC | Pause menu: RESUME / SWITCH PLAYER / QUIT. ESC again while paused quits. (Inactive on both launch menus.) |
 | P | Switch player by typing a name (blank = default player) |
 | T | Swap swatter/pick during the Andvari (evasive) round. The swatter catches one in the open; the pick is the only thing that reaches into a hide-hole |
+
+On the initials screen P and T are just letters — they type, and do not switch
+player or swap tool.
 
 Pausing abandons the round in progress (no partial record); RESUME replays it.
 Progress is saved round-by-round, so quitting mid-sequence loses nothing
@@ -97,9 +118,12 @@ already completed.
 - Leaderboard: `~/.silphe/leaderboard.json` — local top-10 (name / score / date),
   shown as the HIGH SCORES screen when a session ends. Shared by all players on
   the machine. Delete the file to reset it. A score that cracks the top 10 gets
-  the arcade initials-entry screen first (type A–Z, BACKSPACE to fix, ENTER to
-  confirm; prefilled from the player name) and the initials become the
-  leaderboard name.
+  the arcade initials-entry screen first, and the initials become the
+  leaderboard name. It is prefilled from the player name — `DEF` if you played
+  as the default — and **the first letter you type replaces the prefill
+  outright**, so you never have to clear it first. After that, letters fill the
+  remaining slots, BACKSPACE fixes, ENTER confirms. Every letter works,
+  including T and P, which the tool swap and the player switch otherwise claim.
 - Personal bests: `~/.silphe/personal-bests.json` — each player's best score.
   Beating yours blinks * NEW PERSONAL BEST * on the end screen; your best also
   shows on the pause menu next to the running score. Delete the file to reset.
@@ -110,15 +134,19 @@ Each player records into a `recordings-<name>` sibling of the base dir, e.g.
 `~/.silphe/recordings-Rebecca`. No player = the plain `recordings` dir
 (the original single-player layout — old data keeps working).
 
-Three ways to pick a player:
+Four ways to pick a player. The first two settle it before anything is
+recorded, which is where you want to settle it:
 
-1. `--player NAME` at launch.
-2. ESC → SWITCH PLAYER → pick from the list (it scans the `recordings-*` dirs,
-   so anyone who has played before appears) or NEW PLAYER.
-3. P → type a name.
+1. The WHO'S PLAYING? menu at launch (it scans the `recordings-*` dirs, so
+   anyone who has played before appears).
+2. `--player NAME` at launch, which skips that menu.
+3. ESC → SWITCH PLAYER → pick from the list or NEW PLAYER.
+4. P → type a name.
 
-Switching closes the current session file and starts a fresh session, plan,
-and score for the new hand. Every record is stamped with the player name.
+The last two are mid-session switches, and they cost you the session: each
+closes the current session file and starts a fresh session, plan and score for
+the new hand, so rounds already played stay filed under whoever played them.
+Every record is stamped with the player name.
 
 ## Analyzing a player's data
 
