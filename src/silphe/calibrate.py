@@ -27,12 +27,13 @@ points; the top 10 land on a local leaderboard shown at the end.
 
     silphe-play                     # mouse (default), after `pip install silphe`
     silphe-play trackpad            # tag the session as trackpad
-    silphe-play --player Rebecca    # record into ~/.silphe/recordings-Rebecca
+    silphe-play --player Rebecca    # skip the player menu, record into recordings-Rebecca
     silphe-play --difficulty hard   # skip the difficulty menu (easy/normal/hard)
 
-A difficulty menu opens at launch unless --difficulty is given. Sound effects
-are ska horn stabs via winsound (Windows; silent elsewhere). Every plan opens
-with one of each of acquire/track/hold before the roach can appear.
+Launch asks WHO'S PLAYING unless --player is given, then CHOOSE DIFFICULTY
+unless --difficulty is given. Sound effects are ska horn stabs via winsound
+(Windows; silent elsewhere). Every plan opens with one of each of
+acquire/track/hold before the roach can appear.
 """
 
 from __future__ import annotations
@@ -55,6 +56,7 @@ from silphe.maze import (dead_ends, generate as generate_maze,
 VERSION = "Andvari"
 LEADERBOARD_KEEP = 10
 GREENS = ["#0e4429", "#006d32", "#26a641", "#39d353"]
+BG = "#0d1117"          # the near-black the window, the canvas and every menu panel share
 
 # Difficulty shapes the motor challenge and the reward: how long you must
 # hold/track, how mean the roach is, and the score multiplier. tol_mult
@@ -260,10 +262,10 @@ class Garden:
                  difficulty: str | None = None):
         self.root = root
         root.title(f"The Ministry of Silly Mice — {VERSION}")
-        root.configure(bg="#0d1117")
+        root.configure(bg=BG)
         self.W, self.H = 1200, 760
         self.canvas = tk.Canvas(root, width=self.W, height=self.H,
-                                bg="#0d1117", highlightthickness=0)
+                                bg=BG, highlightthickness=0)
         self.canvas.pack(fill="both", expand=True)
 
         self.CELL, self.GAP, self.COLS, self.ROWS = 30, 6, 30, 15
@@ -314,10 +316,10 @@ class Garden:
         root.bind("<Key>", self._initials_key)
         self.difficulty = difficulty if difficulty in DIFFICULTIES else None
         self.diff = DIFFICULTIES[self.difficulty or "normal"]
-        if self.difficulty:
-            self._next()
+        if player is None:
+            self._draw_launch_player_menu()                 # ask before anything is recorded
         else:
-            self._draw_difficulty_menu()
+            self._after_launch_player()
 
     # ---- difficulty ------------------------------------------------------
 
@@ -337,7 +339,10 @@ class Garden:
     # ---- players ---------------------------------------------------------
 
     def _switch_player(self, e=None):
-        if self.state in ("done", "paused", "player_menu", "difficulty_menu", "initials"):
+        if self.state == "initials" and e is not None:
+            return self._initials_key(e)                    # P is a letter here, not the switch
+        if self.state in ("done", "paused", "player_menu", "launch_player_menu",
+                          "difficulty_menu", "initials"):
             return
         self._new_player()
 
@@ -354,13 +359,42 @@ class Garden:
         self.score = 0
         self._next()
 
-    def _new_player(self, e=None):
+    def _new_player(self, e=None, then=None):
         name = simpledialog.askstring(
             "Switch player", "Player name (blank = default player):", parent=self.root)
         if name is None:                                   # cancelled
             return
         name = "".join(ch for ch in name.strip() if ch.isalnum() or ch in "-_") or None
-        self._choose_player(name)
+        (then or self._choose_player)(name)
+
+    # ---- who's playing, at launch ----------------------------------------
+    # The mid-session switch above closes the recorder, reshuffles the plan and
+    # resets the score, because it is abandoning a session for a new hand. At
+    # launch there is nothing to abandon, so this path only settles who is
+    # playing and moves on to the difficulty menu (#75).
+
+    def _draw_launch_player_menu(self):
+        self.state = "launch_player_menu"
+        entries = [(n, lambda n=n: self._choose_launch_player(n)) for n in known_players()[:7]]
+        entries.append(("NEW PLAYER...", lambda: self._new_player(then=self._choose_launch_player)))
+        entries.append(("PLAY AS DEFAULT", lambda: self._choose_launch_player(None)))
+        self._menu("WHO'S PLAYING?", entries)
+
+    def _choose_launch_player(self, name: str | None):
+        if name != self.player:
+            self.recorder.close()
+            self.player = name
+            self.recorder = Recorder(device=self.device, player=self.player)
+        self.canvas.delete("menu")
+        self._after_launch_player()
+
+    def _after_launch_player(self):
+        """Who is playing is settled; --difficulty may still skip the next menu."""
+        if self.difficulty:
+            self.state = "idle"
+            self._next()
+        else:
+            self._draw_difficulty_menu()
 
     # ---- pause menu (ESC) ------------------------------------------------
 
@@ -374,13 +408,13 @@ class Garden:
         for j, (label, cb) in enumerate(entries):
             y = self.H // 2 - 80 + j * 52
             self.canvas.create_rectangle(self.W // 2 - 160, y - 19, self.W // 2 + 160, y + 19,
-                                         outline="#39d353", width=2, tag="menu")
+                                         fill=BG, outline="#39d353", width=2, tag="menu")
             self.canvas.create_text(self.W // 2, y, text=label, fill="#f0f6fc",
                                     font=("Consolas", 13, "bold"), tag="menu")
             self._menu_buttons.append((self.W // 2 - 160, y - 19, self.W // 2 + 160, y + 19, cb))
 
     def _pause(self, e=None):
-        if self.state in ("done", "difficulty_menu", "initials"):
+        if self.state in ("done", "difficulty_menu", "launch_player_menu", "initials"):
             return
         if self.state == "paused":                         # ESC twice = quit
             return self._quit()
@@ -430,7 +464,7 @@ class Garden:
                 x0, y0 = self._cell_xy(r, c)
                 col = random.choice(GREENS) if random.random() < 0.16 else "#161b22"
                 self.cells[(r, c)] = self.canvas.create_rectangle(
-                    x0, y0, x0 + self.CELL, y0 + self.CELL, fill=col, outline="#0d1117")
+                    x0, y0, x0 + self.CELL, y0 + self.CELL, fill=col, outline=BG)
                 self.base[(r, c)] = col
 
     def _paint_field(self):
@@ -749,6 +783,8 @@ class Garden:
         return [tg for tg in self.roaches if not tg["dead"]]
 
     def _switch_tool(self, e=None):
+        if self.state == "initials" and e is not None:
+            return self._initials_key(e)                    # T is a letter here, not the tool swap
         if self.state != "evasive":
             return
         self.tool = "pick" if self.tool == "swatter" else "swatter"
@@ -1162,7 +1198,7 @@ class Garden:
     # ---- click router ---------------------------------------------------
 
     def _click(self, e):
-        if self.state in ("paused", "player_menu", "difficulty_menu"):
+        if self.state in ("paused", "player_menu", "launch_player_menu", "difficulty_menu"):
             for x0, y0, x1, y1, cb in self._menu_buttons:
                 if x0 <= e.x <= x1 and y0 <= e.y <= y1:
                     return cb()
@@ -1272,6 +1308,11 @@ class Garden:
     def _begin_initials(self, who):
         self.state = "initials"
         self.initials = default_initials(who)
+        # The prefill fills all three slots, so an append-only editor would
+        # swallow every letter typed (#74). Until the player touches the
+        # entry, the first letter they type replaces it outright — the way an
+        # arcade cabinet treats the initials it guessed for you.
+        self.initials_untouched = True
         self.canvas.delete("all")
         ska("squash")                                      # a little fanfare for making the board
         self._draw_initials()
@@ -1299,9 +1340,15 @@ class Garden:
             return self._conclude(who, entry_name=self.initials)
         if e.keysym == "BackSpace":
             self.initials = self.initials[:-1]
-        elif len(e.char) == 1 and e.char.isalpha() and len(self.initials) < 3:
-            self.initials += e.char.upper()
-            ska("hit")
+            self.initials_untouched = False
+        elif len(e.char) == 1 and e.char.isalpha():
+            if self.initials_untouched:                    # first letter replaces the prefill
+                self.initials = e.char.upper()
+                self.initials_untouched = False
+                ska("hit")
+            elif len(self.initials) < 3:
+                self.initials += e.char.upper()
+                ska("hit")
         self._draw_initials()
 
     def _conclude(self, who, entry_name):
@@ -1361,7 +1408,7 @@ class Garden:
             return
         self.canvas.delete("newbest")
         self.canvas.create_text(x, y, text="* NEW PERSONAL BEST *",
-                                fill="#39d353" if on else "#0d1117",
+                                fill="#39d353" if on else BG,
                                 font=("Consolas", 16, "bold"), tag="newbest")
         self.root.after(450, lambda: self._blink_best(x, y, not on))
 
