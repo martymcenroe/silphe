@@ -29,6 +29,8 @@ points; the top 10 land on a local leaderboard shown at the end.
     silphe-play trackpad            # tag the session as trackpad
     silphe-play --player Rebecca    # skip the player menu, record into recordings-Rebecca
     silphe-play --difficulty hard   # skip the difficulty menu (easy/normal/hard)
+    silphe-play --mute              # this session only; M mutes for good
+    silphe-play --volume 0.15       # 0.0 to 1.0, this session only
 
 Launch asks WHO'S PLAYING unless --player is given, then CHOOSE DIFFICULTY
 unless --difficulty is given. Sound effects are ska horn stabs via winsound
@@ -125,7 +127,60 @@ def _sound_unavailable(reason: str, expected: bool = False) -> None:
         print(f"silphe: {note} — {reason}", file=sys.stderr)
 
 
-def render_riff(seq, rate: int = SAMPLE_RATE, volume: float = VOLUME) -> bytes:
+# Mute and level, remembered between sessions next to the leaderboard (#85).
+# `Beep` had no amplitude to expose, which is why this arrived with the
+# synthesis rather than before it.
+_muted = False
+_volume = VOLUME
+
+
+def sound_prefs_path() -> str:
+    """Sound settings live next to the leaderboard and the personal bests."""
+    return os.path.join(os.path.dirname(os.path.abspath(recordings_dir())),
+                        "sound.json")
+
+
+def load_sound_prefs() -> None:
+    """Restore the remembered settings. A missing or unreadable file means the
+    defaults — never a crash, and never a silent game nobody asked for."""
+    try:
+        with open(sound_prefs_path(), encoding="utf-8") as f:
+            data = json.load(f)
+        set_muted(bool(data.get("muted", False)), remember=False)
+        set_volume(float(data.get("volume", VOLUME)), remember=False)
+    except Exception:
+        set_muted(False, remember=False)
+        set_volume(VOLUME, remember=False)
+
+
+def save_sound_prefs() -> None:
+    try:
+        with open(sound_prefs_path(), "w", encoding="utf-8") as f:
+            json.dump({"muted": _muted, "volume": _volume}, f)
+    except Exception:
+        pass                                               # a preference is not worth a crash
+
+
+def set_muted(on: bool, remember: bool = True) -> None:
+    global _muted
+    _muted = bool(on)
+    if remember:
+        save_sound_prefs()
+
+
+def set_volume(level: float, remember: bool = True) -> None:
+    """Set the level, 0.0 to 1.0. Clamped rather than refused: a number out of
+    range is a typo, and refusing to start over one would be worse."""
+    global _volume
+    level = max(0.0, min(1.0, float(level)))
+    if level != _volume:
+        _RIFF_WAVS.clear()                                 # every cached render is now stale
+    _volume = level
+    if remember:
+        save_sound_prefs()
+
+
+def render_riff(seq, rate: int = SAMPLE_RATE, volume: float | None = None) -> bytes:
     """One riff as a 16-bit mono WAV, notes and rests together in one buffer.
 
     Rendered whole rather than note by note because PlaySound plays exactly one
@@ -135,6 +190,8 @@ def render_riff(seq, rate: int = SAMPLE_RATE, volume: float = VOLUME) -> bytes:
     The shape of a note is what separates a horn stab from a beep: a couple of
     harmonics over the fundamental, a fast attack, and an exponential decay.
     """
+    if volume is None:
+        volume = _volume                                   # read now, not bound at def time
     frames = bytearray()
     for freq, ms in seq:
         n = int(rate * ms / 1000)
@@ -172,7 +229,7 @@ def ska(event: str):
     Returns the thread, which callers ignore and tests wait on — the
     alternative is a test that sleeps and hopes.
     """
-    if _sound_off:
+    if _sound_off or _muted:
         return None
     seq = SKA_RIFFS.get(event)
     if not seq:
@@ -396,6 +453,8 @@ class Garden:
         root.bind("T", self._switch_tool)
         root.bind("p", self._switch_player)
         root.bind("P", self._switch_player)
+        root.bind("m", self._toggle_mute)
+        root.bind("M", self._toggle_mute)
         root.bind("<Key>", self._initials_key)
         self.difficulty = difficulty if difficulty in DIFFICULTIES else None
         self.diff = DIFFICULTIES[self.difficulty or "normal"]
@@ -509,11 +568,18 @@ class Garden:
         self.state = "paused"
         who = self.player or "default"
         best = personal_best(bests_path(), who)
+        sound = "OFF" if _muted else f"ON  {int(_volume * 100)}%"
         self._menu("PAUSED", [
             (f"RESUME  ({who} · {self.score} pts · best {best})", self._resume),
             ("SWITCH PLAYER", self._draw_player_menu),
+            (f"SOUND: {sound}   [M]", self._mute_from_menu),
             ("QUIT", self._quit),
         ])
+
+    def _mute_from_menu(self):
+        """The pause menu is where you find out M exists at all."""
+        set_muted(not _muted)
+        self._draw_pause()
 
     def _draw_player_menu(self):
         self.state = "player_menu"
@@ -881,6 +947,32 @@ class Garden:
         name = "SWATTER" if self.tool == "swatter" else "PICK (sharp)"
         self.canvas.create_text(self.W - 120, 22, text=f"[T] tool: {name}", fill="#e3b341",
                                 tag="tool", font=("Consolas", 12, "bold"))
+
+    # ---- sound -----------------------------------------------------------
+
+    def _toggle_mute(self, e=None):
+        """M mutes and unmutes, and the choice sticks for next time.
+
+        The forwarding matters: `m` is bound specifically, and Tk fires only
+        the most specific binding, so without this it would vanish from the
+        initials screen exactly the way T and P did (#76).
+        """
+        if self.state == "initials" and e is not None:
+            return self._initials_key(e)                    # M is a letter here
+        set_muted(not _muted)
+        self._show_sound()
+        if not _muted:
+            ska("hit")                                     # you should hear that it came back
+
+    def _show_sound(self):
+        """Say what just happened. Toggling something you cannot hear needs to
+        show, or muting an already-silent game tells you nothing at all."""
+        self.canvas.delete("sound")
+        text = "SOUND OFF" if _muted else f"SOUND ON — {int(_volume * 100)}%"
+        self.canvas.create_text(self.W // 2, self.H - 24, text=f"[M] {text}",
+                                fill="#6e7681" if _muted else "#39d353",
+                                tag="sound", font=("Consolas", 12, "bold"))
+        self.canvas.after(1600, lambda: self.canvas.delete("sound"))
 
     def _neighbors(self, rc):
         r, c = rc
@@ -1496,27 +1588,60 @@ class Garden:
         self.root.after(450, lambda: self._blink_best(x, y, not on))
 
 
-def main() -> None:
-    device, player, difficulty = "mouse", None, None
-    argv = sys.argv[1:]
+def parse_args(argv: list[str]) -> dict:
+    """The command line, as a dict. Split out from :func:`main` so it can be
+    tested without opening a window.
+
+    `volume` and `muted` are None when the flags are absent, which is how the
+    remembered settings survive a launch that says nothing about sound.
+    """
+    out = {"device": "mouse", "player": None, "difficulty": None,
+           "volume": None, "muted": None}
     i = 0
     while i < len(argv):
         a = argv[i]
         if a == "--player":
             i += 1
-            player = argv[i] if i < len(argv) else None
+            out["player"] = argv[i] if i < len(argv) else None
         elif a.startswith("--player="):
-            player = a.split("=", 1)[1]
+            out["player"] = a.split("=", 1)[1]
         elif a == "--difficulty":
             i += 1
-            difficulty = argv[i].lower() if i < len(argv) else None
+            out["difficulty"] = argv[i].lower() if i < len(argv) else None
         elif a.startswith("--difficulty="):
-            difficulty = a.split("=", 1)[1].lower()
+            out["difficulty"] = a.split("=", 1)[1].lower()
+        elif a == "--mute":
+            out["muted"] = True
+        elif a == "--volume":
+            i += 1
+            out["volume"] = argv[i] if i < len(argv) else None
+        elif a.startswith("--volume="):
+            out["volume"] = a.split("=", 1)[1]
         else:
-            device = a
+            out["device"] = a
         i += 1
+    return out
+
+
+def main() -> None:
+    opts = parse_args(sys.argv[1:])
+
+    # Remembered first, then this launch on top. The flags are session-only and
+    # are NOT written back: a one-off `--mute` should not quietly reconfigure
+    # the game forever. M is the deliberate change, and M is what persists.
+    load_sound_prefs()
+    if opts["muted"] is not None:
+        set_muted(opts["muted"], remember=False)
+    if opts["volume"] is not None:
+        try:
+            set_volume(float(opts["volume"]), remember=False)
+        except ValueError:
+            print(f"silphe: --volume wants a number between 0 and 1, "
+                  f"not {opts['volume']!r} — ignoring it", file=sys.stderr)
+
     root = tk.Tk()
-    Garden(root, device=device, player=player, difficulty=difficulty)
+    Garden(root, device=opts["device"], player=opts["player"],
+           difficulty=opts["difficulty"])
     root.mainloop()
 
 

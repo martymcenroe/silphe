@@ -254,7 +254,7 @@ def test_t_and_p_are_bound_specifically_so_the_catch_all_never_sees_them(game):
     while a/z/BackSpace/Return fired the catch-all. That is why the handlers
     below have to forward.
     """
-    for key in ("t", "T", "p", "P"):
+    for key in ("t", "T", "p", "P", "m", "M"):
         assert game.root.bind(key), f"{key} lost its specific binding"
     assert game.root.bind("<Key>"), "the catch-all binding is gone"
 
@@ -297,3 +297,39 @@ def test_p_still_opens_the_player_prompt_during_a_round(game, monkeypatch):
     game.state = "idle"
     game._switch_player(Key("p"))
     assert asked, "P no longer asks for a player mid-session"
+
+
+# ---- M is the third key to walk into this, and must not (#76, #85) --------
+
+@pytest.fixture()
+def unmuted(monkeypatch):
+    from silphe import calibrate
+
+    monkeypatch.setattr(calibrate, "_muted", False)
+    return calibrate
+
+
+def test_m_types_an_m_on_the_initials_screen(game, unmuted):
+    """`m` is bound specifically, so without forwarding it would vanish from
+    the initials screen exactly as T and P did. SAM and TOM need it."""
+    game._begin_initials("default")
+    game._toggle_mute(Key("m"))
+    assert game.initials == "M"
+    assert unmuted._muted is False, "typing a letter muted the game"
+
+
+def test_a_player_called_SAM_can_type_their_own_initials(game, unmuted):
+    game._begin_initials("default")
+    game._initials_key(Key("s"))
+    game._initials_key(Key("a"))
+    game._toggle_mute(Key("m"))
+    assert game.initials == "SAM"
+
+
+def test_m_still_mutes_during_a_round(game, unmuted):
+    """The forwarding must not cost the key its real job."""
+    game.state = "idle"
+    game._toggle_mute(Key("m"))
+    assert unmuted._muted is True
+    game._toggle_mute(Key("m"))
+    assert unmuted._muted is False
