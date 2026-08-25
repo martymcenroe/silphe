@@ -88,6 +88,12 @@ def known_players() -> list[str]:
 # Recording
 # --------------------------------------------------------------------------
 
+# Session paths handed out by this process. Since #78 an issued path need not
+# exist on disk yet, so "is this name taken" cannot be answered by the
+# filesystem alone (#80).
+_issued_session_paths: set[str] = set()
+
+
 class Recorder:
     """Writes a session's movement records as JSONL, stamping the kernel fields
     (:data:`KERNEL_FIELDS`) on every record. A session file is named
@@ -122,10 +128,38 @@ class Recorder:
         self.close()                                       # never leak a handle on reopen
         rec_dir = player_recordings_dir(self.player)
         os.makedirs(rec_dir, exist_ok=True)                # so known_players sees them
-        self.path = os.path.join(rec_dir, f"session-{int(time.time())}-{self.device}.jsonl")
+        self.path = self._free_path(rec_dir)
         self._fh = None
         self._closed = False
         return self.path
+
+    def _free_path(self, rec_dir: str) -> str:
+        """A session path in *rec_dir* nobody else is using.
+
+        The name carries a whole-second stamp, so two sessions beginning in the
+        same second would otherwise be handed the same file and append into
+        each other with nothing to show for it (#80). When the name is taken,
+        advance to the next free second rather than adding a suffix: `arc.py`
+        reads the stamp out of the name and `analysis.py` orders sessions by
+        sorting the filenames, and a `-2` suffix sorts *before* the file it
+        disambiguates. Keeping the shape keeps both of them right.
+
+        A collision costs the session a second or two of accuracy in its
+        recorded start time, which is a better outcome than two sessions
+        sharing a file.
+
+        Only this process's names and what is already on disk are visible here.
+        Two games launched in the same second could still collide, since
+        neither has created its file yet; closing that would mean reserving a
+        name on disk, which is what #78 deliberately stopped doing.
+        """
+        stamp = int(time.time())
+        while True:
+            path = os.path.join(rec_dir, f"session-{stamp}-{self.device}.jsonl")
+            if path not in _issued_session_paths and not os.path.exists(path):
+                _issued_session_paths.add(path)
+                return path
+            stamp += 1
 
     def write(self, record: dict) -> dict:
         """Stamp the kernel fields onto *record* and append it as one JSONL
