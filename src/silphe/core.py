@@ -93,6 +93,11 @@ class Recorder:
     (:data:`KERNEL_FIELDS`) on every record. A session file is named
     ``session-<epoch>-<device>.jsonl`` in the player's recordings dir.
 
+    The file is not created until the first :meth:`write`. A session that
+    records nothing leaves nothing behind — which is the common case at launch,
+    since the game builds a recorder for the default player before asking who
+    is playing, and again for whoever is chosen (#78).
+
     Usage::
 
         rec = Recorder(device="mouse", player="Rebecca")
@@ -106,25 +111,36 @@ class Recorder:
         self.os = platform.system()
         self.path: str | None = None
         self._fh = None
+        self._closed = False
         self.open_session()
 
     def open_session(self) -> str:
-        """Open (or reopen) a fresh session file for the current player and
-        return its path."""
+        """Name (or rename) this session's file for the current player and
+        return its path. The path is settled now — the timestamp in it is when
+        the session began, not when the first round landed — but nothing is
+        created on disk until something is written."""
+        self.close()                                       # never leak a handle on reopen
         rec_dir = player_recordings_dir(self.player)
-        os.makedirs(rec_dir, exist_ok=True)
+        os.makedirs(rec_dir, exist_ok=True)                # so known_players sees them
         self.path = os.path.join(rec_dir, f"session-{int(time.time())}-{self.device}.jsonl")
-        self._fh = open(self.path, "a", encoding="utf-8")
+        self._fh = None
+        self._closed = False
         return self.path
 
     def write(self, record: dict) -> dict:
         """Stamp the kernel fields onto *record* and append it as one JSONL
         line. Returns the stamped record (the caller may read back the score
-        etc. it added). Flushes so an interrupted session keeps every round."""
+        etc. it added). Flushes so an interrupted session keeps every round.
+        Creates the session file if this is the first record."""
         record["schema_version"] = SCHEMA_VERSION
         record["device"] = self.device
         record["os"] = self.os
         record["player"] = self.player or ""
+        if self._closed:
+            # Deferring the open must not quietly resurrect a finished session.
+            raise ValueError("write to a closed Recorder")
+        if self._fh is None:
+            self._fh = open(self.path, "a", encoding="utf-8")
         self._fh.write(json.dumps(record) + "\n")
         self._fh.flush()
         return record
@@ -135,3 +151,5 @@ class Recorder:
                 self._fh.close()
         except Exception:
             pass
+        self._fh = None
+        self._closed = True

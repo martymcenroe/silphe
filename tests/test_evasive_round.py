@@ -7,6 +7,7 @@ fail if the wiring is wrong in a way the pure-logic tests cannot see.
 
 import json
 import math
+import os
 import time
 
 import pytest
@@ -72,6 +73,16 @@ def run(garden, frames=60):
         for tg in garden.roaches:
             tg["last"] -= 0.05
         garden._roach_tick()
+
+
+def records(path):
+    """Every record written so far. The session file is not created until the
+    first write (#78), so a file that is not there yet means nothing has been
+    recorded — which is the same thing an empty file used to mean."""
+    if not os.path.exists(path):
+        return []
+    with open(path, encoding="utf-8") as f:
+        return [json.loads(x) for x in f if x.strip()]
 
 
 def on_field(tg):
@@ -282,15 +293,14 @@ def test_the_round_only_ends_when_the_last_roach_is_down(garden, tmp_path):
     for tg in doomed[:-1]:
         swat(garden, tg)
         assert garden.state == "evasive", "round ended with roaches still loose"
-    assert not any(line.strip() for line
-                   in open(garden.recorder.path, encoding="utf-8")), \
+    assert records(garden.recorder.path) == [], \
         "nothing is recorded until the round is over"
 
     swat(garden, doomed[-1])
     assert garden.state == "idle"
     garden.recorder.close()
-    rows = [json.loads(x) for x in open(garden.recorder.path, encoding="utf-8") if x.strip()]
-    assert len(rows) == 1, "the whole round is one record, not one per roach"
+    assert len(records(garden.recorder.path)) == 1, \
+        "the whole round is one record, not one per roach"
 
 
 def test_the_record_carries_every_roach_and_the_maze(garden):
