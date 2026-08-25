@@ -28,6 +28,8 @@ build). Double-click works.
 poetry run silphe-play trackpad            # tag the session as trackpad instead of mouse
 poetry run silphe-play --player Rebecca    # skip the player menu, start as a named player
 poetry run silphe-play --difficulty hard   # skip the difficulty menu (easy/normal/hard)
+poetry run silphe-play --mute              # silent, this session only
+poetry run silphe-play --volume 0.15       # 0.0 to 1.0, this session only
 ```
 
 ## What launch asks you
@@ -93,8 +95,19 @@ move. That is deliberate, not a bug.
 Sound effects are ska horn stabs (offbeat skank for hits, a trombone slump
 for misses, a horn run for squashing the roach, a full riff on the high-score
 screen). Each riff is synthesized as a short WAV the first time it is needed
-and played through `winsound`. Windows-only; silent no-op elsewhere. No mute
-flag yet — mute the system volume if needed (#85).
+and played through `winsound`. Windows-only; silent no-op elsewhere.
+
+**Turning it off: press M.** It mutes and unmutes mid-round, shows what it did
+at the bottom of the screen, and plays a stab on the way back so you can hear
+that it returned. The pause menu carries the same toggle, which is where you
+find out the key exists. **M is remembered** — mute it tonight and it is still
+muted tomorrow, stored in `~/.silphe/sound.json` next to the leaderboard.
+
+`--mute` and `--volume 0.0`–`1.0` do the same for one session **without being
+remembered**, so a one-off quiet launch does not silently reconfigure the game
+for good. A volume outside the range is clamped rather than refused, and a
+`--volume` that is not a number is ignored with a note on stderr. Delete
+`sound.json` to get back to the defaults.
 
 **If you hear nothing, look at the terminal you launched from.** The game says
 why, once, on stderr: `no sound` when there is no `winsound` to play through,
@@ -111,9 +124,10 @@ volume rather than the game.
 | ESC | Pause menu: RESUME / SWITCH PLAYER / QUIT. ESC again while paused quits. (Inactive on both launch menus.) |
 | P | Switch player by typing a name (blank = default player) |
 | T | Swap swatter/pick during the Andvari (evasive) round. The swatter catches one in the open; the pick is the only thing that reaches into a hide-hole |
+| M | Mute and unmute. Remembered for next time |
 
-On the initials screen P and T are just letters — they type, and do not switch
-player or swap tool.
+On the initials screen P, T and M are just letters — they type, and do not
+switch player, swap tool or mute.
 
 Pausing abandons the round in progress (no partial record); RESUME replays it.
 Progress is saved round-by-round, so quitting mid-sequence loses nothing
@@ -136,6 +150,10 @@ already completed.
 - Personal bests: `~/.silphe/personal-bests.json` — each player's best score.
   Beating yours blinks * NEW PERSONAL BEST * on the end screen; your best also
   shows on the pause menu next to the running score. Delete the file to reset.
+- Sound: `~/.silphe/sound.json` — whether M has muted the game, and at what
+  level. Shared by all players on the machine, like the leaderboard. Delete the
+  file to reset; a mangled one is ignored rather than fatal, and you get the
+  defaults.
 
 ## Players
 
