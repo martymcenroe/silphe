@@ -38,14 +38,17 @@ acquire/track/hold before the roach can appear.
 
 from __future__ import annotations
 
+import io
 import json
 import math
 import os
 import random
+import struct
 import sys
 import threading
 import time
 import tkinter as tk
+import wave
 from collections import deque
 from tkinter import simpledialog
 
@@ -82,7 +85,7 @@ def make_plan() -> list[str]:
     return opener + rest
 
 
-# ---- ska horn section (stdlib beeps; silent no-op off Windows) -------------
+# ---- ska horn section (stdlib synthesis; silent no-op off Windows) ---------
 # (freq_hz, ms) pairs; freq 0 = rest. Offbeat rests before the stabs are what
 # make it skank instead of just beep.
 SKA_RIFFS = {
@@ -93,26 +96,106 @@ SKA_RIFFS = {
                (0, 50), (932, 70), (0, 50), (1397, 90), (1245, 90), (1865, 200)],
 }
 
+SAMPLE_RATE = 22050
+VOLUME = 0.35            # headroom on purpose: a stab that clips sounds worse than a quiet one
+ATTACK_SECS = 0.006      # short enough to read as a stab, long enough not to click
+DECAY_PER_SEC = 9.0      # how fast a note falls away; this is what stops it being a tone
 
-def ska(event: str) -> None:
-    """Fire-and-forget a riff on a daemon thread — Beep blocks, the game loop
-    must not."""
+# Rendered riffs, kept for the life of the process. Two reasons: synthesis is a
+# per-sample Python loop and has no business running inside the game loop
+# twice, and SND_ASYNC hands Windows a buffer it goes on reading after the call
+# returns — a buffer that gets collected plays as garbage (#83).
+_RIFF_WAVS: dict[str, bytes] = {}
+
+# Sound is never worth crashing a game over, but it should not be able to fail
+# in silence either — that is indistinguishable from a game choosing to be
+# quiet, and it is what made the silence in #82 take a diagnostic to narrow
+# down. Say it once, then stop: a warning per hit is worse than the silence
+# it reports (#84).
+_sound_off = False
+_sound_reported = False
+
+
+def _sound_unavailable(reason: str, expected: bool = False) -> None:
+    global _sound_off, _sound_reported
+    _sound_off = True
+    if not _sound_reported:
+        _sound_reported = True
+        note = "no sound" if expected else "SOUND FAILED"
+        print(f"silphe: {note} — {reason}", file=sys.stderr)
+
+
+def render_riff(seq, rate: int = SAMPLE_RATE, volume: float = VOLUME) -> bytes:
+    """One riff as a 16-bit mono WAV, notes and rests together in one buffer.
+
+    Rendered whole rather than note by note because PlaySound plays exactly one
+    sound at a time — a second call stops the first, so a riff issued a note at
+    a time would cut itself off at every step.
+
+    The shape of a note is what separates a horn stab from a beep: a couple of
+    harmonics over the fundamental, a fast attack, and an exponential decay.
+    """
+    frames = bytearray()
+    for freq, ms in seq:
+        n = int(rate * ms / 1000)
+        if not freq:
+            frames += bytes(2 * n)                         # a rest is silence, not nothing
+            continue
+        for i in range(n):
+            t = i / rate
+            env = min(1.0, t / ATTACK_SECS) * math.exp(-t * DECAY_PER_SEC)
+            wave_ = (math.sin(2 * math.pi * freq * t)
+                     + 0.5 * math.sin(4 * math.pi * freq * t)
+                     + 0.25 * math.sin(6 * math.pi * freq * t)) / 1.75
+            frames += struct.pack("<h", int(volume * env * wave_ * 32767))
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(bytes(frames))
+    return buf.getvalue()
+
+
+def ska(event: str):
+    """Fire-and-forget a riff on a daemon thread.
+
+    The thread is not optional. `winsound` refuses `SND_MEMORY | SND_ASYNC`
+    outright — "Cannot play asynchronously from memory" — because it cannot
+    guarantee the buffer outlives the call, so playing from memory blocks for
+    the length of the riff. What did change from the Beep this replaces is that
+    it blocks once per riff rather than once per note.
+
+    Rendering happens on the thread too, so the game loop never pays for the
+    first hit of a session.
+
+    Returns the thread, which callers ignore and tests wait on — the
+    alternative is a test that sleeps and hopes.
+    """
+    if _sound_off:
+        return None
     seq = SKA_RIFFS.get(event)
     if not seq:
-        return
+        return None
     try:
         import winsound
     except ImportError:
-        return
+        _sound_unavailable(f"winsound is Windows-only, this is {sys.platform}",
+                           expected=True)
+        return None
 
     def run():
-        for freq, ms in seq:
-            if freq:
-                winsound.Beep(freq, ms)
-            else:
-                time.sleep(ms / 1000)
+        try:
+            wav = _RIFF_WAVS.get(event)
+            if wav is None:
+                wav = _RIFF_WAVS[event] = render_riff(seq)
+            winsound.PlaySound(wav, winsound.SND_MEMORY)
+        except Exception as exc:
+            _sound_unavailable(f"{type(exc).__name__}: {exc}")
 
-    threading.Thread(target=run, daemon=True).start()
+    t = threading.Thread(target=run, daemon=True)
+    t.start()
+    return t
 
 
 def round_score(obj: dict) -> int:

@@ -92,8 +92,17 @@ move. That is deliberate, not a bug.
 
 Sound effects are ska horn stabs (offbeat skank for hits, a trombone slump
 for misses, a horn run for squashing the roach, a full riff on the high-score
-screen). Windows-only (`winsound`); silent no-op elsewhere. No mute flag yet —
-mute the system volume if needed.
+screen). Each riff is synthesized as a short WAV the first time it is needed
+and played through `winsound`. Windows-only; silent no-op elsewhere. No mute
+flag yet — mute the system volume if needed (#85).
+
+**If you hear nothing, look at the terminal you launched from.** The game says
+why, once, on stderr: `no sound` when there is no `winsound` to play through,
+which is the ordinary state off Windows, and `SOUND FAILED` with the error when
+it is Windows and the sound did not work. It says it once rather than once per
+hit, and it never interrupts the game. Silence with nothing printed means the
+audio reached Windows and Windows played it — check the output device and the
+volume rather than the game.
 
 ## In-game keys
 
