@@ -94,8 +94,10 @@ move. That is deliberate, not a bug.
 
 Sound effects are ska horn stabs (offbeat skank for hits, a trombone slump
 for misses, a horn run for squashing the roach, a full riff on the high-score
-screen). Each riff is synthesized as a short WAV the first time it is needed
-and played through `winsound`. Windows-only; silent no-op elsewhere.
+screen). They are **chords, not single notes** — a stab is a horn section
+hitting the offbeat together, which one pitch cannot be — written in B flat
+and synthesized as a short WAV the first time each is needed, then played
+through `winsound`. Windows-only; silent no-op elsewhere.
 
 **Turning it off: press M.** It mutes and unmutes mid-round, shows what it did
 at the bottom of the screen, and plays a stab on the way back so you can hear
