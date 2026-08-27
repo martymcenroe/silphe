@@ -90,10 +90,18 @@ def test_difficulties_are_well_formed():
 
 
 def test_ska_riffs_well_formed_and_ska_is_safe_to_call():
-    from silphe.calibrate import SKA_RIFFS, ska
+    """A slot is (pitch, ms), where a pitch is a rest, one frequency, or a
+    chord of them (#90). The bound here used to be `winsound.Beep`'s legal
+    range, which stopped meaning anything when Beep gave way to synthesis
+    (#83); what matters now is audible and below Nyquist.
+    """
+    from silphe.calibrate import SAMPLE_RATE, SKA_RIFFS, ska
     for seq in SKA_RIFFS.values():
-        for freq, ms in seq:
-            assert freq == 0 or 37 <= freq <= 32767   # winsound.Beep's legal range
+        for pitch, ms in seq:
+            notes = () if not pitch else \
+                (pitch,) if isinstance(pitch, (int, float)) else tuple(pitch)
+            for f in notes:
+                assert 20 <= f < SAMPLE_RATE / 2
             assert 0 < ms < 1000
     ska("board")          # fire-and-forget; must not raise even mid-test
     ska("no-such-event")  # unknown events are a no-op

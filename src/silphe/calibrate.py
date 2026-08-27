@@ -88,20 +88,40 @@ def make_plan() -> list[str]:
 
 
 # ---- ska horn section (stdlib synthesis; silent no-op off Windows) ---------
-# (freq_hz, ms) pairs; freq 0 = rest. Offbeat rests before the stabs are what
-# make it skank instead of just beep.
+#
+# Slots are `(pitch, ms)`. A pitch is a TUPLE of frequencies — a chord — or a
+# single frequency, or 0 for a rest. Chords are the point: a ska stab is a horn
+# SECTION hitting the offbeat together, and a single pitch can never be a
+# section however good its timbre (#90). The rests before the stabs are the
+# skank; take them out and it is just noise on the beat.
+#
+# The key is B flat, which is where the original single-note riffs already sat
+# and where brass lives anyway.
+BB = (466, 587, 698)             # B flat major  — B flat, D, F
+EB = (622, 784, 932)             # E flat major  — E flat, G, B flat
+CM = (523, 622, 784)             # C minor       — C, E flat, G
+DM = (587, 698, 880)             # D minor       — D, F, A
+BB_HIGH = (932, 1175, 1397)      # B flat major, an octave up — the payoff chord
+
 SKA_RIFFS = {
-    "hit":    [(0, 30), (932, 45), (1245, 60)],                    # upstroke double-stab
-    "miss":   [(233, 90), (0, 40), (220, 150)],                    # trombone slump
-    "squash": [(622, 50), (932, 50), (1245, 50), (0, 30), (1865, 90)],  # horn run
-    "board":  [(466, 70), (0, 50), (932, 70), (0, 50), (466, 70),
-               (0, 50), (932, 70), (0, 50), (1397, 90), (1245, 90), (1865, 200)],
+    # rest on the beat, stab on the "and" — the upstroke, twice, rising
+    "hit":    [(0, 30), (BB, 55), (EB, 70)],
+    # the trombone slump: a fat chord that sags a semitone and sits there
+    "miss":   [((233, 349, 466), 90), (0, 40), ((220, 330, 440), 190)],
+    # a run up the horns and a shout at the top
+    "squash": [(BB, 50), (CM, 50), (EB, 55), (0, 30), (BB_HIGH, 110)],
+    # the high-score phrase: four bars of skank, a turnaround, and a held tonic
+    "board":  [(0, 45), (BB, 65), (0, 45), (BB, 65),
+               (0, 45), (EB, 65), (0, 45), (EB, 65),
+               (CM, 85), (DM, 85), (BB_HIGH, 280)],
 }
 
 SAMPLE_RATE = 22050
 VOLUME = 0.35            # headroom on purpose: a stab that clips sounds worse than a quiet one
-ATTACK_SECS = 0.006      # short enough to read as a stab, long enough not to click
-DECAY_PER_SEC = 9.0      # how fast a note falls away; this is what stops it being a tone
+ATTACK_SECS = 0.022      # a horn takes a moment to speak; an instant onset is what sounds synthetic
+DECAY_PER_SEC = 7.0      # how fast a note falls away; this is what stops it being a tone
+PARTIALS = 9             # brass is a rich spectrum, not a fundamental with two friends
+BRIGHT_FALL = 0.34       # upper partials decay this much faster — the bright-to-dark sweep of brass
 
 # Rendered riffs, kept for the life of the process. Two reasons: synthesis is a
 # per-sample Python loop and has no business running inside the game loop
@@ -187,24 +207,48 @@ def render_riff(seq, rate: int = SAMPLE_RATE, volume: float | None = None) -> by
     sound at a time — a second call stops the first, so a riff issued a note at
     a time would cut itself off at every step.
 
-    The shape of a note is what separates a horn stab from a beep: a couple of
-    harmonics over the fundamental, a fast attack, and an exponential decay.
+    A slot's pitch may be a chord (a tuple of frequencies), a single frequency,
+    or 0 for a rest.
+
+    What makes it read as brass rather than as a beep is the spectrum: many
+    partials at 1/n, with the upper ones decaying faster than the lower, so the
+    note is bright at the attack and darkens as it falls — which is what a horn
+    does. Partials at or above the Nyquist frequency are dropped rather than
+    folded back down the spectrum as noise.
     """
     if volume is None:
         volume = _volume                                   # read now, not bound at def time
-    frames = bytearray()
-    for freq, ms in seq:
+    nyquist = rate / 2
+    signal: list[float] = []
+    for pitch, ms in seq:
         n = int(rate * ms / 1000)
-        if not freq:
-            frames += bytes(2 * n)                         # a rest is silence, not nothing
+        if not pitch:
+            signal += [0.0] * n                            # a rest is silence, not nothing
             continue
+        chord = (pitch,) if isinstance(pitch, (int, float)) else tuple(pitch)
+        # Precompute the partials that survive the sample rate, per note.
+        voices = [[(f * h, 1.0 / h, DECAY_PER_SEC * (1 + BRIGHT_FALL * (h - 1)))
+                   for h in range(1, PARTIALS + 1) if f * h < nyquist]
+                  for f in chord]
         for i in range(n):
             t = i / rate
-            env = min(1.0, t / ATTACK_SECS) * math.exp(-t * DECAY_PER_SEC)
-            wave_ = (math.sin(2 * math.pi * freq * t)
-                     + 0.5 * math.sin(4 * math.pi * freq * t)
-                     + 0.25 * math.sin(6 * math.pi * freq * t)) / 1.75
-            frames += struct.pack("<h", int(volume * env * wave_ * 32767))
+            attack = min(1.0, t / ATTACK_SECS)
+            total = 0.0
+            for partials in voices:
+                for hz, gain, decay in partials:
+                    total += gain * math.exp(-t * decay) * math.sin(2 * math.pi * hz * t)
+            signal.append(attack * total)
+
+    # Normalize to the requested peak. A worst-case divisor (every partial of
+    # every voice in phase at once) is far below what actually happens, and
+    # rendering to a third of the available headroom would just sound quiet.
+    # This makes `volume` mean the peak level, which is the useful reading.
+    loudest = max((abs(s) for s in signal), default=0.0)
+    scale = (volume / loudest) if loudest else 0.0
+    frames = bytearray()
+    for s in signal:
+        frames += struct.pack("<h", int(s * scale * 32767))
+
     buf = io.BytesIO()
     with wave.open(buf, "wb") as w:
         w.setnchannels(1)
