@@ -1466,7 +1466,7 @@ class Garden:
     # ---- click router ---------------------------------------------------
 
     def _click(self, e):
-        if self.state in ("paused", "player_menu", "launch_player_menu", "difficulty_menu"):
+        if self.state in ("paused", "player_menu", "launch_player_menu", "difficulty_menu", "done"):
             for x0, y0, x1, y1, cb in self._menu_buttons:
                 if x0 <= e.x <= x1 and y0 <= e.y <= y1:
                     return cb()
@@ -1670,6 +1670,79 @@ class Garden:
             y += 32
         self.canvas.create_text(cx, y + 34, fill="#6e7681", font=("Consolas", 11),
                                 text=f"movement saved · {os.path.basename(self.recorder.path)}")
+        self._draw_end_menu()
+
+    # ---- starting again (#88) --------------------------------------------
+
+    def _draw_end_menu(self):
+        """Buttons along the bottom of the end screen.
+
+        A row rather than `_menu`, which stacks from the middle of the canvas
+        and would sit on top of the score table. Without these the game simply
+        stopped: `done` refuses ESC and P, so closing the window was the only
+        way out and relaunching the only way back in.
+        """
+        self._menu_buttons = []
+        entries = [("PLAY AGAIN", self._play_again),
+                   ("DIFFICULTY", self._again_at_difficulty),
+                   ("SWITCH PLAYER", self._again_as_player),
+                   ("QUIT", self._quit_from_end)]
+        bw, gap, h = 262, 18, 40
+        x = (self.W - (len(entries) * bw + (len(entries) - 1) * gap)) // 2
+        y = self.H - 52
+        for label, cb in entries:
+            self.canvas.create_rectangle(x, y - h // 2, x + bw, y + h // 2,
+                                         fill=BG, outline="#39d353", width=2, tag="endmenu")
+            self.canvas.create_text(x + bw // 2, y, text=label, fill="#f0f6fc",
+                                    font=("Consolas", 13, "bold"), tag="endmenu")
+            self._menu_buttons.append((x, y - h // 2, x + bw, y + h // 2, cb))
+            x += bw + gap
+
+    def _fresh_session(self):
+        """Wipe the finished run and lay a new garden.
+
+        The field is rebuilt rather than repainted: the end screen cleared the
+        canvas, so the item ids in `self.cells` no longer exist and
+        `_paint_field` would be configuring deleted items.
+
+        The recorder is replaced rather than reused, because `write` on a
+        closed one raises deliberately (#78) — and the one built here leaves no
+        file behind if the player then picks a different name, for the same
+        reason.
+        """
+        self.canvas.delete("all")
+        self._menu_buttons = []
+        self.cells, self.base = {}, {}
+        self._draw_field()
+        self.recorder.close()
+        self.recorder = Recorder(device=self.device, player=self.player)
+        self.plan = self._make_plan()
+        self.i = 0
+        self.score = 0
+        self.hit_n = 0
+        self.tool = "swatter"
+        self.tool_switches, self.target_switches, self.path = [], [], []
+
+    def _play_again(self):
+        """The common case, so it is the first button: same player, same
+        difficulty, straight back into a round."""
+        self._fresh_session()
+        self.state = "idle"
+        self._next()
+
+    def _again_at_difficulty(self):
+        self._fresh_session()
+        self._draw_difficulty_menu()
+
+    def _again_as_player(self):
+        self._fresh_session()
+        self._draw_launch_player_menu()
+
+    def _quit_from_end(self):
+        """`_quit` runs `_finish`, which would conclude a run that has already
+        concluded — a second trip through the leaderboard. This just closes."""
+        self.recorder.close()
+        self.root.destroy()
 
     def _blink_best(self, x, y, on=True):
         if self.state != "done":
