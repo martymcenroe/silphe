@@ -153,6 +153,21 @@ Pausing abandons the round in progress (no partial record); RESUME replays it.
 Progress is saved round-by-round, so quitting mid-sequence loses nothing
 already completed.
 
+## When a run ends
+
+The HIGH SCORES screen carries four buttons along the bottom:
+
+- **PLAY AGAIN** — same player, same difficulty, straight into a new run. The
+  common case, so it is first.
+- **DIFFICULTY** — back to CHOOSE DIFFICULTY, keeping the player.
+- **SWITCH PLAYER** — back to WHO'S PLAYING?. Difficulty is already settled by
+  then, so picking a name goes straight into play.
+- **QUIT** — closes the window.
+
+Each of the first three starts a genuinely new run: a new session file, a fresh
+plan, and the score back to zero. The run that just finished keeps its place on
+the leaderboard and its own recording — starting again disturbs neither.
+
 ## Where the data lives
 
 - Recordings: `~/.silphe/recordings/` by default, one `session-<ts>-<device>.jsonl`
