@@ -457,7 +457,13 @@ class Garden:
     # they run from it as they run from you, but only your own swats score.
     # Its pursuit is also a robot chasing a robot, which is a movement sample
     # no human hand produced.
-    GECKO_AFTER = 6.0
+    #
+    # It used to arrive six seconds in, which on easy was before the player had
+    # closed on anything: a measured playtest ended a round with zero player
+    # hits and a score of zero because the gecko had cleared the field (#89).
+    # It now stays away for half a minute, and it can never take the last
+    # roach — the round has to be finished by the hand the game is measuring.
+    GECKO_AFTER = 30.0
     GECKO_SPEED = 7.0
     GECKO_REACH = 12.0
 
@@ -1222,6 +1228,12 @@ class Garden:
         g["py"] = ay + (by - ay) * g["prog"]
         g["heading"] = (ax, ay, bx, by)
         g["path"].append((round(now - self.t0, 4), round(g["px"], 1), round(g["py"], 1)))
+        if len(live) <= 1:
+            # The last roach is the player's to take. The gecko still hunts it
+            # — the pressure is the point, and the roach still flees whichever
+            # of you is nearer — but it cannot land the kill, so a round can
+            # never end without the hand that is being measured (#89).
+            return
         for tg in live:
             if tg["hidden"] or tg["under"]:
                 continue                                   # it cannot reach down a hole either

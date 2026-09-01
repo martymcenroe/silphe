@@ -660,22 +660,80 @@ def test_the_gecko_waits_before_it_shows_up(garden, monkeypatch):
 
 
 def test_the_gecko_takes_a_roach_but_the_player_gets_nothing_for_it(garden, monkeypatch):
+    """Two roaches, because the gecko may no longer take the last one (#89): it
+    eats the first, the player finishes the second, and only the player's own
+    blow is paid for."""
     no_dice(monkeypatch, garden)
-    tg = solo(garden)
+    victim, survivor = garden.roaches[0], garden.roaches[1]
     gecko = summon_gecko(garden)
-    stalk(garden, tg)
 
-    assert tg["dead"] and tg["died"]["cause"] == "gecko"
-    assert [kill[1] for kill in gecko["kills"]] == [tg["id"]]
-    assert garden.hit_n == 0, "the player never landed a blow"
+    safe = (survivor["px"], survivor["py"])
+    survivor["px"], survivor["py"] = -1000.0, -1000.0      # out of the gecko's reach
+    stalk(garden, victim)
+    survivor["px"], survivor["py"] = safe
 
+    assert victim["dead"] and victim["died"]["cause"] == "gecko"
+    assert [kill[1] for kill in gecko["kills"]] == [victim["id"]]
+    assert garden.hit_n == 0, "the player had not landed a blow yet"
+
+    swat(garden, survivor)                                 # the round is the player's to end
     run(garden, frames=1)                                  # the round notices it is over
     garden.recorder.close()
     row = json.loads(open(garden.recorder.path, encoding="utf-8").readline())
-    assert row["player_hits"] == 0 and row["score"] == 0, "the gecko does not score for you"
-    assert row["hits"] == tg["hp0"], "what it would have taken is still recorded"
-    assert row["roaches"][0]["died"]["cause"] == "gecko"
+    assert row["player_hits"] == 1, "only the player's own blow is credited"
+    assert row["hits"] == victim["hp0"] + survivor["hp0"], \
+        "what the brood would have taken is still recorded"
+    assert sorted(r["died"]["cause"] for r in row["roaches"]) == ["gecko", "swat"]
     assert row["gecko"]["path"] and row["gecko"]["kills"]
+
+
+def test_the_gecko_stays_away_for_half_a_minute(garden):
+    """It used to arrive six seconds in, before the player had closed on
+    anything — a measured round ended with zero player hits and a score of zero
+    because it had cleared the field (#89)."""
+    assert garden.GECKO_AFTER >= 30.0
+
+
+def test_the_gecko_cannot_take_the_last_roach(garden, monkeypatch):
+    """The round has to be finished by the hand the game is measuring."""
+    no_dice(monkeypatch, garden)
+    tg = solo(garden)                                      # one left, so it is the last
+    summon_gecko(garden)
+    stalk(garden, tg)
+
+    assert not tg["dead"], "the gecko took the roach the player had to take"
+    assert garden.gecko["kills"] == []
+    assert garden.state == "evasive", "the round ended without the player"
+
+
+def test_it_keeps_hunting_the_last_roach_anyway(garden, monkeypatch):
+    """Barred from the kill, not sent home — the pressure is the point, and the
+    roach still runs from whichever of you is nearer."""
+    no_dice(monkeypatch, garden)
+    tg = solo(garden)
+    gecko = summon_gecko(garden)
+    before = (gecko["px"], gecko["py"])
+    for _ in range(30):
+        gecko["last"] -= 0.05
+        garden._gecko_tick(time.perf_counter())
+
+    assert not tg["dead"]
+    assert (gecko["px"], gecko["py"]) != before, "the gecko stopped moving"
+    assert len(gecko["path"]) > 1
+
+
+def test_the_player_can_still_finish_the_last_roach(garden, monkeypatch):
+    """The other half of the rule: barring the gecko must not leave the round
+    unfinishable."""
+    no_dice(monkeypatch, garden)
+    tg = solo(garden)
+    summon_gecko(garden)
+    stalk(garden, tg)
+    assert not tg["dead"]
+
+    swat(garden, tg)
+    assert tg["dead"] and tg["died"]["cause"] == "swat"
+    assert garden.state != "evasive", "the round did not end"
 
 
 def test_the_gecko_cannot_reach_down_a_hole(garden, monkeypatch):
