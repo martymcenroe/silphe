@@ -82,13 +82,15 @@ to its planted scatter when the round ends. What is on the field:
 | Gold dots | Crumbs. A roach nearby breaks off to eat and stands still with its head down, which is your best chance at it |
 | Purple dots | Laced crumbs. Whatever finishes one sickens, slows, staggers and dies |
 | A brown body with a purple outline | A poisoned corpse. It is still poison — the next roach to eat it goes the same way, having never touched the bait |
-| A cyan lizard | The gecko. It turns up a few seconds in and hunts the roaches too. **It is not something to swat**, and the roaches run from whichever is nearer, it or your cursor |
+| A cyan lizard | The gecko. It stays away for the first **30 seconds**, then turns up and hunts the roaches too. **It is not something to swat**, and the roaches run from whichever is nearer, it or your cursor. **It can never take the last roach** — it keeps chasing, but the finishing blow is yours |
 
-The round runs until the **last** roach is down, not the first.
+The round runs until the **last** roach is down, not the first, and that last
+one is yours to take: the gecko is barred from it. The early rounds are yours
+alone — half a minute is long enough to close on a roach through the maze
+before anything else is competing for it.
 
 **Only your own swats score.** Poison and the gecko take roaches as well, and
-neither earns you anything — if the gecko clears the field your score does not
-move. That is deliberate, not a bug.
+neither earns you anything. That is deliberate, not a bug.
 
 ## Sound
 
