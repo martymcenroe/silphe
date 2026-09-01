@@ -119,9 +119,13 @@ def test_the_same_volume_keeps_the_cache(monkeypatch):
 
 def test_volume_is_clamped_not_refused():
     """An out-of-range number is a typo, and refusing to start over one would
-    be worse than quietly doing the sane thing."""
+    be worse than quietly doing the sane thing. The top of the range is
+    VOLUME_CEILING rather than full scale since #92 — a hearing-safety bound
+    that nothing, including the command line, gets past."""
+    from silphe.calibrate import VOLUME_CEILING
+
     set_volume(9.0, remember=False)
-    assert calibrate._volume == 1.0
+    assert calibrate._volume == VOLUME_CEILING
     set_volume(-3.0, remember=False)
     assert calibrate._volume == 0.0
 

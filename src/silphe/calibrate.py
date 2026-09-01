@@ -117,7 +117,14 @@ SKA_RIFFS = {
 }
 
 SAMPLE_RATE = 22050
-VOLUME = 0.35            # headroom on purpose: a stab that clips sounds worse than a quiet one
+# Peak level of a rendered riff, as a fraction of full scale. Deliberately low.
+# 0.35 was picked by someone listening on speakers, and on earbuds it was loud
+# enough to hurt (#92). A game must not open at a level nobody gave it
+# permission for: quiet is a nuisance, loud in earbuds is an injury, so the
+# error goes downwards and the player raises it with [ and ].
+VOLUME = 0.10
+VOLUME_STEP = 0.05       # one press of [ or ]
+VOLUME_CEILING = 0.60    # holding ] must not be able to walk back into the old problem
 ATTACK_SECS = 0.022      # a horn takes a moment to speak; an instant onset is what sounds synthetic
 DECAY_PER_SEC = 7.0      # how fast a note falls away; this is what stops it being a tone
 PARTIALS = 9             # brass is a rich spectrum, not a fundamental with two friends
@@ -189,15 +196,27 @@ def set_muted(on: bool, remember: bool = True) -> None:
 
 
 def set_volume(level: float, remember: bool = True) -> None:
-    """Set the level, 0.0 to 1.0. Clamped rather than refused: a number out of
-    range is a typo, and refusing to start over one would be worse."""
+    """Set the level, 0.0 to VOLUME_CEILING. Clamped rather than refused: a
+    number out of range is a typo, and refusing to start over one would be
+    worse. The ceiling is a hearing-safety bound, not a preference — nothing in
+    the game, including `--volume 1.0`, gets past it (#92)."""
     global _volume
-    level = max(0.0, min(1.0, float(level)))
+    level = max(0.0, min(VOLUME_CEILING, float(level)))
     if level != _volume:
         _RIFF_WAVS.clear()                                 # every cached render is now stale
     _volume = level
     if remember:
         save_sound_prefs()
+
+
+def nudge_volume(steps: int) -> float:
+    """Move the level by whole steps and return where it landed. Unmutes on the
+    way up, because reaching for "louder" while muted means you want to hear
+    it, not that you want to raise a silence."""
+    if steps > 0 and _muted:
+        set_muted(False, remember=False)
+    set_volume(_volume + steps * VOLUME_STEP)
+    return _volume
 
 
 def render_riff(seq, rate: int = SAMPLE_RATE, volume: float | None = None) -> bytes:
@@ -499,6 +518,12 @@ class Garden:
         root.bind("P", self._switch_player)
         root.bind("m", self._toggle_mute)
         root.bind("M", self._toggle_mute)
+        # Brackets, not letters, and deliberately so: T, P and M each had to
+        # grow a forwarding branch to stay typable on the initials screen
+        # (#76). A non-letter cannot collide with initials entry at all, so
+        # this is the fourth key without being the fourth special case.
+        root.bind("<bracketleft>", lambda e: self._nudge_volume(-1))
+        root.bind("<bracketright>", lambda e: self._nudge_volume(1))
         root.bind("<Key>", self._initials_key)
         self.difficulty = difficulty if difficulty in DIFFICULTIES else None
         self.diff = DIFFICULTIES[self.difficulty or "normal"]
@@ -612,11 +637,14 @@ class Garden:
         self.state = "paused"
         who = self.player or "default"
         best = personal_best(bests_path(), who)
-        sound = "OFF" if _muted else f"ON  {int(_volume * 100)}%"
+        pct = int(round(_volume * 100))
+        sound = f"OFF  ({pct}%)" if _muted else f"ON  {pct}%"
         self._menu("PAUSED", [
             (f"RESUME  ({who} · {self.score} pts · best {best})", self._resume),
             ("SWITCH PLAYER", self._draw_player_menu),
             (f"SOUND: {sound}   [M]", self._mute_from_menu),
+            ("QUIETER  [", lambda: self._volume_from_menu(-1)),
+            ("LOUDER  ]", lambda: self._volume_from_menu(1)),
             ("QUIT", self._quit),
         ])
 
@@ -624,6 +652,14 @@ class Garden:
         """The pause menu is where you find out M exists at all."""
         set_muted(not _muted)
         self._draw_pause()
+
+    def _volume_from_menu(self, steps: int):
+        """Same for the brackets, and it redraws so the percentage moves under
+        you — a level control you cannot see the effect of is a guess."""
+        nudge_volume(steps)
+        self._draw_pause()
+        if steps > 0 and not _muted:
+            ska("hit")
 
     def _draw_player_menu(self):
         self.state = "player_menu"
@@ -1008,12 +1044,25 @@ class Garden:
         if not _muted:
             ska("hit")                                     # you should hear that it came back
 
+    def _nudge_volume(self, steps: int):
+        """[ quieter, ] louder — mid-round, and remembered.
+
+        Mute is the wrong instrument for "this is too loud in my earbuds": it
+        is all or nothing, and the thing wanted is less (#92).
+        """
+        nudge_volume(steps)
+        self._show_sound()
+        if steps > 0 and not _muted:
+            ska("hit")                                     # hear where you have landed
+
     def _show_sound(self):
-        """Say what just happened. Toggling something you cannot hear needs to
-        show, or muting an already-silent game tells you nothing at all."""
+        """Say what just happened. Changing something you cannot hear needs to
+        show, or adjusting an already-silent game tells you nothing at all."""
         self.canvas.delete("sound")
-        text = "SOUND OFF" if _muted else f"SOUND ON — {int(_volume * 100)}%"
-        self.canvas.create_text(self.W // 2, self.H - 24, text=f"[M] {text}",
+        pct = int(round(_volume * 100))
+        text = f"SOUND OFF  ({pct}%)" if _muted else f"SOUND {pct}%"
+        self.canvas.create_text(self.W // 2, self.H - 24,
+                                text=f"[M] mute   [ ] volume   ·   {text}",
                                 fill="#6e7681" if _muted else "#39d353",
                                 tag="sound", font=("Consolas", 12, "bold"))
         self.canvas.after(1600, lambda: self.canvas.delete("sound"))

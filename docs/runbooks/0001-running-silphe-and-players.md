@@ -99,13 +99,29 @@ hitting the offbeat together, which one pitch cannot be — written in B flat
 and synthesized as a short WAV the first time each is needed, then played
 through `winsound`. Windows-only; silent no-op elsewhere.
 
-**Turning it off: press M.** It mutes and unmutes mid-round, shows what it did
-at the bottom of the screen, and plays a stab on the way back so you can hear
-that it returned. The pause menu carries the same toggle, which is where you
-find out the key exists. **M is remembered** — mute it tonight and it is still
-muted tomorrow, stored in `~/.silphe/sound.json` next to the leaderboard.
+**It starts quiet on purpose.** The stock level is a peak of 10% of full
+scale. An earlier default of 35% was picked by someone listening on speakers
+and was loud enough on earbuds to hurt, so the error now goes downwards: quiet
+is a nuisance, loud in earbuds is an injury. Turn it up if you want it up.
 
-`--mute` and `--volume 0.0`–`1.0` do the same for one session **without being
+**`[` quieter, `]` louder** — mid-round, in steps of 5 points, shown at the
+bottom of the screen and **remembered** in `~/.silphe/sound.json` next to the
+leaderboard. `]` also unmutes, because reaching for louder while muted means
+you want to hear it. Both are on the pause menu too, which is where you find
+out they exist.
+
+They are bracket keys rather than letters deliberately: every *letter* bound in
+this game has had to grow a special case to stay typable on the initials screen
+(T, P and M all did). A non-letter cannot collide with initials entry at all.
+
+**`M` mutes and unmutes**, also mid-round and also remembered — the right
+control when you want it gone rather than quieter.
+
+**There is a ceiling of 60%,** and nothing gets past it — not the pause menu,
+not holding `]`, not `--volume 1.0`. It is a hearing-safety bound rather than a
+preference.
+
+`--mute` and `--volume` do the same for one session **without being
 remembered**, so a one-off quiet launch does not silently reconfigure the game
 for good. A volume outside the range is clamped rather than refused, and a
 `--volume` that is not a number is ignored with a note on stderr. Delete
@@ -127,9 +143,11 @@ volume rather than the game.
 | P | Switch player by typing a name (blank = default player) |
 | T | Swap swatter/pick during the Andvari (evasive) round. The swatter catches one in the open; the pick is the only thing that reaches into a hide-hole |
 | M | Mute and unmute. Remembered for next time |
+| `[` `]` | Quieter / louder, in steps of 5 points. Remembered. `]` unmutes |
 
 On the initials screen P, T and M are just letters — they type, and do not
-switch player, swap tool or mute.
+switch player, swap tool or mute. `[` and `]` are not letters, so they keep
+working there and adjust the volume as usual.
 
 Pausing abandons the round in progress (no partial record); RESUME replays it.
 Progress is saved round-by-round, so quitting mid-sequence loses nothing
