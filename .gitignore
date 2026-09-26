@@ -82,3 +82,27 @@ GEMINI.md
 docs/session-logs/
 docs/lessons-learned.md
 docs/handoff*
+
+# --- backfilled from new_repo.py template (2026-09-15) ---
+# Patterns this repo predates. Appended by tools/retrofit_data_dl_disk_only.py;
+# nothing above this line was changed.
+*.pyd
+.Python
+env/
+env.bak/
+venv.bak/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+data/
+data-g/probe
+data-unleashed/
+data-dl/*
+!data-dl/README.md
+!data-dl/audio/
+!data-dl/audio/.gitkeep
+!data-dl/transcripts/
+!data-dl/transcripts/.gitkeep
+!data-dl/reference/
+!data-dl/reference/.gitkeep
